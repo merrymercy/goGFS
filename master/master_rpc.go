@@ -102,3 +102,17 @@ func (m *Master) GetReplicas(args GetReplicasArg, reply *GetReplicasReply) error
 	reply.Locations = l
 	return nil
 }
+
+type GetChunkArg struct {
+	Path          string
+	Index         int64
+	AddIfNotExist bool
+}
+
+type GetChunkReply struct {
+	llgfs.ChunkInfo
+}
+
+func (m *Master) GetChunk(args GetChunkArg, reply *GetChunkReply) error {
+
+}
