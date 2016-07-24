@@ -6,21 +6,21 @@ import (
 	"sync"
 	"time"
 
-	"github.com/abcdabcd987/llgfs"
+	"github.com/abcdabcd987/llgfs/gfs"
 )
 
 // chunkServerManager manages chunkservers
 type chunkServerManager struct {
 	lock    sync.RWMutex
-	servers map[llgfs.ServerAddress]chunkServerInfo
+	servers map[gfs.ServerAddress]chunkServerInfo
 }
 
 type chunkServerInfo struct {
 	lastHeartbeat time.Time
-	chunks        map[llgfs.ChunkHandle]bool // set of chunks that the chunkserver has
+	chunks        map[gfs.ChunkHandle]bool // set of chunks that the chunkserver has
 }
 
-func (csm *chunkServerManager) Heartbeat(addr llgfs.ServerAddress) {
+func (csm *chunkServerManager) Heartbeat(addr gfs.ServerAddress) {
 	csm.lock.Lock()
 	defer csm.lock.Unlock()
 
@@ -28,7 +28,7 @@ func (csm *chunkServerManager) Heartbeat(addr llgfs.ServerAddress) {
 	cs.lastHeartbeat = time.Now()
 }
 
-func (csm *chunkServerManager) AddChunks(addr llgfs.ServerAddress, chunks []llgfs.ChunkHandle) {
+func (csm *chunkServerManager) AddChunks(addr gfs.ServerAddress, chunks []gfs.ChunkHandle) {
 	csm.lock.Lock()
 	defer csm.lock.Unlock()
 
@@ -38,14 +38,14 @@ func (csm *chunkServerManager) AddChunks(addr llgfs.ServerAddress, chunks []llgf
 	}
 }
 
-func (csm *chunkServerManager) Sample(k int) ([]llgfs.ServerAddress, error) {
+func (csm *chunkServerManager) Sample(k int) ([]gfs.ServerAddress, error) {
 	csm.lock.RLock()
 	defer csm.lock.RUnlock()
 
 	if k > len(csm.servers) {
 		return nil, fmt.Errorf("Cannot sample %v from %v servers", k, len(csm.servers))
 	}
-	srvs := make([]llgfs.ServerAddress, 0, len(csm.servers))
+	srvs := make([]gfs.ServerAddress, 0, len(csm.servers))
 	for k := range csm.servers {
 		srvs = append(srvs, k)
 	}

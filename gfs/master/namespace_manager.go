@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/abcdabcd987/llgfs"
+	"github.com/abcdabcd987/llgfs/gfs"
 )
 
 type namespaceManager struct {
@@ -94,7 +94,7 @@ func (nm *namespaceManager) Mkdir(p string) error {
 }
 
 // List returns information of all files and directories inside p.
-func (nm *namespaceManager) List(p string) ([]llgfs.PathInfo, error) {
+func (nm *namespaceManager) List(p string) ([]gfs.PathInfo, error) {
 	ps, cwd, err := nm.lockParents(p)
 	defer nm.unlockParents(ps)
 	if err != nil {
@@ -108,9 +108,9 @@ func (nm *namespaceManager) List(p string) ([]llgfs.PathInfo, error) {
 		return nil, fmt.Errorf("path %s is a file, not directory", p)
 	}
 
-	ls := make([]llgfs.PathInfo, 0, len(cwd.children))
+	ls := make([]gfs.PathInfo, 0, len(cwd.children))
 	for name, v := range cwd.children {
-		ls = append(ls, llgfs.PathInfo{
+		ls = append(ls, gfs.PathInfo{
 			Name:   name,
 			IsDir:  v.isDir,
 			Length: v.length,

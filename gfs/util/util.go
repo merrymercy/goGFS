@@ -5,11 +5,11 @@ import (
 	"math/rand"
 	"net/rpc"
 
-	"github.com/abcdabcd987/llgfs"
+	"github.com/abcdabcd987/llgfs/gfs"
 )
 
 // Call is RPC call helper
-func Call(srv llgfs.ServerAddress, rpcname string, args interface{}, reply interface{}) error {
+func Call(srv gfs.ServerAddress, rpcname string, args interface{}, reply interface{}) error {
 	c, errx := rpc.Dial("tcp", string(srv))
 	if errx != nil {
 		return errx
@@ -25,10 +25,10 @@ func Call(srv llgfs.ServerAddress, rpcname string, args interface{}, reply inter
 }
 
 // CallAll applies the rpc call to all destinations.
-func CallAll(dst []llgfs.ServerAddress, rpcname string, args interface{}) (err error) {
+func CallAll(dst []gfs.ServerAddress, rpcname string, args interface{}) (err error) {
 	ch := make(chan error)
 	for _, d := range dst {
-		go func(addr llgfs.ServerAddress) {
+		go func(addr gfs.ServerAddress) {
 			ch <- Call(addr, rpcname, args, nil)
 		}(d)
 	}

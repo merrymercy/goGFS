@@ -2,7 +2,7 @@ package chunkserver
 
 import (
 	"fmt"
-	"log"
+	log "github.com/Sirupsen/logrus"
 	"math/rand"
 	"net"
 	"net/rpc"
@@ -11,30 +11,30 @@ import (
 	"sync"
 	"time"
 
-	"github.com/abcdabcd987/llgfs"
-	"github.com/abcdabcd987/llgfs/util"
+	"github.com/abcdabcd987/llgfs/gfs"
+	"github.com/abcdabcd987/llgfs/gfs/util"
 )
 
 // ChunkServer struct
 type ChunkServer struct {
-	address    llgfs.ServerAddress // chunkserver address
-	master     llgfs.ServerAddress // master address
-	serverRoot string              // path to data storage
+	address    gfs.ServerAddress // chunkserver address
+	master     gfs.ServerAddress // master address
+	serverRoot string            // path to data storage
 	l          net.Listener
 	shutdown   chan bool
 
-	dl                *downloadBuffer                 // expiring download buffer
-	pendingExtensions *util.ArraySet                  // pending lease extension
-	chunk             map[llgfs.ChunkHandle]chunkInfo // chunk information
+	dl                *downloadBuffer               // expiring download buffer
+	pendingExtensions *util.ArraySet                // pending lease extension
+	chunk             map[gfs.ChunkHandle]chunkInfo // chunk information
 }
 
 type chunkInfo struct {
 	sync.RWMutex
-	length llgfs.Offset
+	length gfs.Offset
 }
 
 // NewAndServe starts a chunkserver and return the pointer to it.
-func NewAndServe(addr, masterAddr llgfs.ServerAddress, serverRoot string) *ChunkServer {
+func NewAndServe(addr, masterAddr gfs.ServerAddress, serverRoot string) *ChunkServer {
 	cs := &ChunkServer{
 		address:           addr,
 		master:            masterAddr,
@@ -47,6 +47,7 @@ func NewAndServe(addr, masterAddr llgfs.ServerAddress, serverRoot string) *Chunk
 	l, e := net.Listen("tcp", string(cs.address))
 	if e != nil {
 		log.Fatal("listen error:", e)
+		log.Exit(1)
 	}
 	cs.l = l
 
@@ -73,21 +74,26 @@ func NewAndServe(addr, masterAddr llgfs.ServerAddress, serverRoot string) *Chunk
 
 	// Heartbeat
 	go func() {
-		pe := cs.pendingExtensions.GetAllAndClear()
-		le := make([]llgfs.ChunkHandle, len(pe))
-		for i, v := range pe {
-			le[i] = v.(llgfs.ChunkHandle)
-		}
-		args := &llgfs.HeartbeatArg{
-			Address:         addr,
-			LeaseExtensions: le,
-		}
-		if err := util.Call(cs.master, "Master.Heartbeat", args, nil); err != nil {
-			log.Fatal("heartbeat rpc error", err)
-		}
+		for {
+			pe := cs.pendingExtensions.GetAllAndClear()
+			le := make([]gfs.ChunkHandle, len(pe))
+			for i, v := range pe {
+				le[i] = v.(gfs.ChunkHandle)
+			}
+			args := &gfs.HeartbeatArg{
+				Address:         addr,
+				LeaseExtensions: le,
+			}
+			if err := util.Call(cs.master, "Master.RPCHeartbeat", args, nil); err != nil {
+				log.Fatal("heartbeat rpc error", err)
+				log.Exit(1)
+			}
 
-		time.Sleep(llgfs.HeartbeatInterval)
+			time.Sleep(gfs.HeartbeatInterval)
+		}
 	}()
+
+	log.Infof("ChunkServer is now running. addr = %v, root path = %v, master addr = %v", addr, serverRoot, masterAddr)
 
 	return cs
 }
@@ -95,17 +101,17 @@ func NewAndServe(addr, masterAddr llgfs.ServerAddress, serverRoot string) *Chunk
 // RPCPushDataAndForward is called by client.
 // It saves client pushed data to memory buffer and forward to all other replicas.
 // Returns a DataID which represents the index in the memory buffer.
-func (cs *ChunkServer) RPCPushDataAndForward(args llgfs.PushDataAndForwardArg, reply *llgfs.PushDataAndForwardReply) error {
+func (cs *ChunkServer) RPCPushDataAndForward(args gfs.PushDataAndForwardArg, reply *gfs.PushDataAndForwardReply) error {
 	cs.dl.Lock()
 	defer cs.dl.Unlock()
 
-	if len(args.Data) > llgfs.MaxChunkSize {
-		return fmt.Errorf("Data is too large. Size %v > MaxSize %v", len(args.Data), llgfs.MaxChunkSize)
+	if len(args.Data) > gfs.MaxChunkSize {
+		return fmt.Errorf("Data is too large. Size %v > MaxSize %v", len(args.Data), gfs.MaxChunkSize)
 	}
 
-	var id llgfs.DataBufferID
+	var id gfs.DataBufferID
 	for {
-		id = llgfs.DataBufferID(rand.Int63())
+		id = gfs.DataBufferID(rand.Int63())
 		if _, ok := cs.dl.Get(id); !ok {
 			break
 		}
@@ -113,14 +119,14 @@ func (cs *ChunkServer) RPCPushDataAndForward(args llgfs.PushDataAndForwardArg, r
 
 	cs.dl.Set(id, args.Data)
 
-	forwardArg := llgfs.ForwardDataArg{args.Data, id}
+	forwardArg := gfs.ForwardDataArg{args.Data, id}
 	err := util.CallAll(args.ForwardTo, "ChunkServer.RPCForwardData", forwardArg)
 	return err
 }
 
 // RPCForwardData is called by another replica who sends data to the current memory buffer.
 // TODO: This should be replaced by a chain forwarding.
-func (cs *ChunkServer) RPCForwardData(args llgfs.ForwardDataArg, reply *llgfs.ForwardDataReply) error {
+func (cs *ChunkServer) RPCForwardData(args gfs.ForwardDataArg, reply *gfs.ForwardDataReply) error {
 	cs.dl.Lock()
 	defer cs.dl.Unlock()
 	if _, ok := cs.dl.Get(args.DataID); ok {
@@ -131,7 +137,7 @@ func (cs *ChunkServer) RPCForwardData(args llgfs.ForwardDataArg, reply *llgfs.Fo
 }
 
 // deleteDownloadedData returns the corresponding data and delete it from the buffer.
-func (cs *ChunkServer) deleteDownloadedData(id llgfs.DataBufferID) ([]byte, error) {
+func (cs *ChunkServer) deleteDownloadedData(id gfs.DataBufferID) ([]byte, error) {
 	cs.dl.Lock()
 	defer cs.dl.Unlock()
 	data, ok := cs.dl.Get(id)
@@ -143,7 +149,7 @@ func (cs *ChunkServer) deleteDownloadedData(id llgfs.DataBufferID) ([]byte, erro
 }
 
 // RPCWriteChunk applies chunk write to itself (primary) and asks secondaries to do the same.
-func (cs *ChunkServer) RPCWriteChunk(args llgfs.WriteChunkArg, reply *llgfs.WriteChunkReply) error {
+func (cs *ChunkServer) RPCWriteChunk(args gfs.WriteChunkArg, reply *gfs.WriteChunkReply) error {
 	data, err := cs.deleteDownloadedData(args.DataID)
 	if err != nil {
 		return err
@@ -155,7 +161,7 @@ func (cs *ChunkServer) RPCWriteChunk(args llgfs.WriteChunkArg, reply *llgfs.Writ
 	}
 
 	// apply to secondary
-	awargs := llgfs.ApplyWriteChunkArg{args.Handle, args.Offset, args.DataID}
+	awargs := gfs.ApplyWriteChunkArg{args.Handle, args.Offset, args.DataID}
 	if err := util.CallAll(args.Secondaries, "ChunkServer.ApplyWriteChunk", awargs); err != nil {
 		return err
 	}
@@ -167,7 +173,7 @@ func (cs *ChunkServer) RPCWriteChunk(args llgfs.WriteChunkArg, reply *llgfs.Writ
 }
 
 // RPCApplyWriteChunk is called by primary to apply chunk write.
-func (cs *ChunkServer) RPCApplyWriteChunk(args llgfs.ApplyWriteChunkArg, reply *llgfs.ApplyWriteChunkReply) error {
+func (cs *ChunkServer) RPCApplyWriteChunk(args gfs.ApplyWriteChunkArg, reply *gfs.ApplyWriteChunkReply) error {
 	data, err := cs.deleteDownloadedData(args.DataID)
 	if err != nil {
 		return err
@@ -181,7 +187,7 @@ func (cs *ChunkServer) RPCApplyWriteChunk(args llgfs.ApplyWriteChunkArg, reply *
 }
 
 // writeChunk writes data at offset to a chunk at disk
-func (cs *ChunkServer) writeChunk(handle llgfs.ChunkHandle, data []byte, offset llgfs.Offset, lock bool) error {
+func (cs *ChunkServer) writeChunk(handle gfs.ChunkHandle, data []byte, offset gfs.Offset, lock bool) error {
 	h, ok := cs.chunk[handle]
 	if !ok {
 		return fmt.Errorf("Chunk %v does not exist", handle)
@@ -191,9 +197,9 @@ func (cs *ChunkServer) writeChunk(handle llgfs.ChunkHandle, data []byte, offset 
 		defer h.Unlock()
 	}
 
-	newLength := offset + llgfs.Offset(len(data))
-	if newLength > llgfs.MaxChunkSize {
-		return fmt.Errorf("writeChunk new length %v exceed max chunk size %v", newLength, llgfs.MaxChunkSize)
+	newLength := offset + gfs.Offset(len(data))
+	if newLength > gfs.MaxChunkSize {
+		return fmt.Errorf("writeChunk new length %v exceed max chunk size %v", newLength, gfs.MaxChunkSize)
 	}
 
 	filename := path.Join(cs.serverRoot, fmt.Sprintf("chunks/%v.chunk", handle))
@@ -212,7 +218,7 @@ func (cs *ChunkServer) writeChunk(handle llgfs.ChunkHandle, data []byte, offset 
 }
 
 // RPCCreateChunk is called by master to create a new chunk given the chunk handle.
-func (cs *ChunkServer) RPCCreateChunk(args llgfs.CreateChunkArg, reply *llgfs.CreateChunkReply) error {
+func (cs *ChunkServer) RPCCreateChunk(args gfs.CreateChunkArg, reply *gfs.CreateChunkReply) error {
 	if _, ok := cs.chunk[args.Handle]; ok {
 		return fmt.Errorf("Chunk %v already exists", args.Handle)
 	}
@@ -224,14 +230,14 @@ func (cs *ChunkServer) RPCCreateChunk(args llgfs.CreateChunkArg, reply *llgfs.Cr
 // The length of data should be within 1/4 chunk size.
 // If the chunk size after appending the data will excceed the limit,
 // pad current chunk and ask the client to retry on the next chunk.
-func (cs *ChunkServer) RPCAppendChunk(args llgfs.AppendChunkArg, reply *llgfs.AppendChunkReply) error {
+func (cs *ChunkServer) RPCAppendChunk(args gfs.AppendChunkArg, reply *gfs.AppendChunkReply) error {
 	data, ok := cs.dl.Get(args.DataID)
 	if !ok {
 		return fmt.Errorf("DataID %v not found in download buffer.", args.DataID)
 	}
 
-	if len(data) > llgfs.MaxAppendSize {
-		return fmt.Errorf("Append data size %v excceeds max append size %v", len(data), llgfs.MaxAppendSize)
+	if len(data) > gfs.MaxAppendSize {
+		return fmt.Errorf("Append data size %v excceeds max append size %v", len(data), gfs.MaxAppendSize)
 	}
 
 	h, ok := cs.chunk[args.Handle]
@@ -240,14 +246,14 @@ func (cs *ChunkServer) RPCAppendChunk(args llgfs.AppendChunkArg, reply *llgfs.Ap
 	}
 	h.Lock()
 	defer h.Unlock()
-	newLength := h.length + llgfs.Offset(len(data))
-	if newLength > llgfs.MaxChunkSize {
+	newLength := h.length + gfs.Offset(len(data))
+	if newLength > gfs.MaxChunkSize {
 		// pad local
 		cs.padChunk(args.Handle)
 
 		// pad secondaries
-		util.CallAll(args.Secondaries, "ChunkServer.PadChunk", llgfs.PadChunkArg{args.Handle})
-		return fmt.Errorf("New chunk size %v excceeds max chunk size %v", newLength, llgfs.MaxChunkSize)
+		util.CallAll(args.Secondaries, "ChunkServer.PadChunk", gfs.PadChunkArg{args.Handle})
+		return fmt.Errorf("New chunk size %v excceeds max chunk size %v", newLength, gfs.MaxChunkSize)
 	}
 
 	// write local
@@ -257,7 +263,7 @@ func (cs *ChunkServer) RPCAppendChunk(args llgfs.AppendChunkArg, reply *llgfs.Ap
 	}
 
 	// write secondary
-	awargs := llgfs.ApplyWriteChunkArg{args.Handle, offset, args.DataID}
+	awargs := gfs.ApplyWriteChunkArg{args.Handle, offset, args.DataID}
 	if err := util.CallAll(args.Secondaries, "ChunkServer.ApplyWriteChunk", awargs); err != nil {
 		return err
 	}
@@ -271,13 +277,13 @@ func (cs *ChunkServer) RPCAppendChunk(args llgfs.AppendChunkArg, reply *llgfs.Ap
 
 // padChunk pads a chunk to max chunk size.
 // <code>cs.chunk[handle]</code> should be locked in advance
-func (cs *ChunkServer) padChunk(handle llgfs.ChunkHandle) {
+func (cs *ChunkServer) padChunk(handle gfs.ChunkHandle) {
 	h, _ := cs.chunk[handle]
-	h.length = llgfs.MaxChunkSize
+	h.length = gfs.MaxChunkSize
 }
 
 // RPCPadChunk is called by primary and it should pad the chunk to max size.
-func (cs *ChunkServer) RPCPadChunk(args llgfs.PadChunkArg, reply *llgfs.PadChunkReply) error {
+func (cs *ChunkServer) RPCPadChunk(args gfs.PadChunkArg, reply *gfs.PadChunkReply) error {
 	h, ok := cs.chunk[args.Handle]
 	if !ok {
 		return fmt.Errorf("Chunk %v does not exist", args.Handle)

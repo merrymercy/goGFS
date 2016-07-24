@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/abcdabcd987/llgfs"
+	"github.com/abcdabcd987/llgfs/gfs"
 )
 
 type downloadItem struct {
@@ -14,7 +14,7 @@ type downloadItem struct {
 
 type downloadBuffer struct {
 	sync.RWMutex
-	buffer map[llgfs.DataBufferID]downloadItem
+	buffer map[gfs.DataBufferID]downloadItem
 	expire time.Duration
 	tick   time.Duration
 }
@@ -43,11 +43,11 @@ func newDownloadBuffer(expire, tick time.Duration) *downloadBuffer {
 	return buf
 }
 
-func (buf *downloadBuffer) Set(id llgfs.DataBufferID, data []byte) {
+func (buf *downloadBuffer) Set(id gfs.DataBufferID, data []byte) {
 	buf.buffer[id] = downloadItem{data, time.Now().Add(buf.expire)}
 }
 
-func (buf *downloadBuffer) Get(id llgfs.DataBufferID) ([]byte, bool) {
+func (buf *downloadBuffer) Get(id gfs.DataBufferID) ([]byte, bool) {
 	item, ok := buf.buffer[id]
 	if !ok {
 		return nil, ok
@@ -56,6 +56,6 @@ func (buf *downloadBuffer) Get(id llgfs.DataBufferID) ([]byte, bool) {
 	return item.data, ok
 }
 
-func (buf *downloadBuffer) Delete(id llgfs.DataBufferID) {
+func (buf *downloadBuffer) Delete(id gfs.DataBufferID) {
 	delete(buf.buffer, id)
 }

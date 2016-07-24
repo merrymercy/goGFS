@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/abcdabcd987/llgfs"
-	"github.com/abcdabcd987/llgfs/util"
+	"github.com/abcdabcd987/llgfs/gfs"
+	"github.com/abcdabcd987/llgfs/gfs/util"
 )
 
 // chunkManager manges chunks
@@ -14,26 +14,26 @@ type chunkManager struct {
 	lock      sync.RWMutex
 	batchLock bool
 
-	chunk map[llgfs.ChunkHandle]*chunkInfo
-	file  map[llgfs.Path]*fileInfo
+	chunk map[gfs.ChunkHandle]*chunkInfo
+	file  map[gfs.Path]*fileInfo
 
-	numChunkHandle llgfs.ChunkHandle
+	numChunkHandle gfs.ChunkHandle
 }
 
 type chunkInfo struct {
-	location util.ArraySet       // set of replica locations
-	primary  llgfs.ServerAddress // primary chunkserver
-	expire   time.Time           // lease expire time
+	location util.ArraySet     // set of replica locations
+	primary  gfs.ServerAddress // primary chunkserver
+	expire   time.Time         // lease expire time
 }
 
 type fileInfo struct {
-	index []llgfs.ChunkHandle
+	index []gfs.ChunkHandle
 }
 
 type lease struct {
-	primary     llgfs.ServerAddress
+	primary     gfs.ServerAddress
 	expire      time.Time
-	secondaries []llgfs.ServerAddress
+	secondaries []gfs.ServerAddress
 }
 
 func (cm *chunkManager) Lock() {
@@ -57,7 +57,7 @@ func (cm *chunkManager) RUnlock() {
 }
 
 // RegisterReplica adds a replica for a chunk
-func (cm *chunkManager) RegisterReplica(handle llgfs.ChunkHandle, addr llgfs.ServerAddress) error {
+func (cm *chunkManager) RegisterReplica(handle gfs.ChunkHandle, addr gfs.ServerAddress) error {
 	if !cm.batchLock {
 		cm.lock.RLock()
 		defer cm.lock.RUnlock()
@@ -72,7 +72,7 @@ func (cm *chunkManager) RegisterReplica(handle llgfs.ChunkHandle, addr llgfs.Ser
 }
 
 // GetReplicas returns the replicas of a chunk
-func (cm *chunkManager) GetReplicas(handle llgfs.ChunkHandle) (*util.ArraySet, error) {
+func (cm *chunkManager) GetReplicas(handle gfs.ChunkHandle) (*util.ArraySet, error) {
 	if !cm.batchLock {
 		cm.lock.RLock()
 		defer cm.lock.RUnlock()
@@ -87,7 +87,7 @@ func (cm *chunkManager) GetReplicas(handle llgfs.ChunkHandle) (*util.ArraySet, e
 
 // // AddChunk add a chunk for (path, index) with replicas. If there already exists
 // // a chunk for (path, index), no new chunk will be added.
-// func (cm *chunkManager) AddChunk(path string, index int64, replicas []llgfs.ServerAddress) llgfs.ChunkHandle {
+// func (cm *chunkManager) AddChunk(path string, index int64, replicas []gfs.ServerAddress) gfs.ChunkHandle {
 // 	if !cm.batchLock {
 // 		cm.lock.RLock()
 // 		defer cm.lock.RUnlock()
@@ -112,7 +112,7 @@ func (cm *chunkManager) GetReplicas(handle llgfs.ChunkHandle) (*util.ArraySet, e
 // }
 
 // GetChunk returns the chunk handle for (path, index).
-func (cm *chunkManager) GetChunk(path llgfs.Path, index llgfs.ChunkIndex) (llgfs.ChunkHandle, error) {
+func (cm *chunkManager) GetChunk(path gfs.Path, index gfs.ChunkIndex) (gfs.ChunkHandle, error) {
 	if !cm.batchLock {
 		cm.lock.RLock()
 		defer cm.lock.RUnlock()
@@ -127,7 +127,7 @@ func (cm *chunkManager) GetChunk(path llgfs.Path, index llgfs.ChunkIndex) (llgfs
 // GetLeaseHolder returns the chunkserver that hold the lease of a chunk
 // (i.e. primary) and expire time of the lease. If no one has a lease,
 // grants one to a replica it chooses.
-func (cm *chunkManager) GetLeaseHolder(handle llgfs.ChunkHandle) (*lease, error) {
+func (cm *chunkManager) GetLeaseHolder(handle gfs.ChunkHandle) (*lease, error) {
 	if !cm.batchLock {
 		cm.lock.RLock()
 		defer cm.lock.RUnlock()
@@ -145,13 +145,13 @@ func (cm *chunkManager) GetLeaseHolder(handle llgfs.ChunkHandle) (*lease, error)
 			return nil, fmt.Errorf("no replica available for chunk %v", handle)
 		}
 
-		c.primary = c.location.RandomPick().(llgfs.ServerAddress)
-		c.expire = now.Add(llgfs.LeaseExpire)
+		c.primary = c.location.RandomPick().(gfs.ServerAddress)
+		c.expire = now.Add(gfs.LeaseExpire)
 	}
 
-	var snd []llgfs.ServerAddress
+	var snd []gfs.ServerAddress
 	for _, v := range c.location.GetAll() {
-		if addr := v.(llgfs.ServerAddress); addr != c.primary {
+		if addr := v.(gfs.ServerAddress); addr != c.primary {
 			snd = append(snd, addr)
 		}
 	}
@@ -160,7 +160,7 @@ func (cm *chunkManager) GetLeaseHolder(handle llgfs.ChunkHandle) (*lease, error)
 }
 
 // ExtendLease extends the lease of chunk if the lease holder is nobody or primary.
-func (cm *chunkManager) ExtendLease(handle llgfs.ChunkHandle, primary llgfs.ServerAddress) (*time.Time, error) {
+func (cm *chunkManager) ExtendLease(handle gfs.ChunkHandle, primary gfs.ServerAddress) (*time.Time, error) {
 	if !cm.batchLock {
 		cm.lock.RLock()
 		defer cm.lock.RUnlock()
@@ -176,12 +176,12 @@ func (cm *chunkManager) ExtendLease(handle llgfs.ChunkHandle, primary llgfs.Serv
 		return nil, fmt.Errorf("%v does not hold the lease for chunk %v", primary, handle)
 	}
 	c.primary = primary
-	c.expire = now.Add(llgfs.LeaseExpire)
+	c.expire = now.Add(gfs.LeaseExpire)
 	return &c.expire, nil
 }
 
 // CreateChunk creates a new chunk for path. The index must be the next chunk of the path.
-func (cm *chunkManager) CreateChunk(path llgfs.Path, index llgfs.ChunkIndex) (llgfs.ChunkHandle, error) {
+func (cm *chunkManager) CreateChunk(path gfs.Path, index gfs.ChunkIndex) (gfs.ChunkHandle, error) {
 	if !cm.batchLock {
 		cm.lock.Lock()
 		defer cm.lock.Unlock()

@@ -1,4 +1,4 @@
-package llgfs
+package gfs
 
 import "time"
 
