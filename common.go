@@ -4,9 +4,10 @@ import "time"
 
 type Path string
 type ServerAddress string
-type ChunkIndex int64
+type Offset int64
+type ChunkIndex int
 type ChunkHandle int64
-type DataBufferId int64
+type DataBufferID int64
 
 type ChunkInfo struct {
 	handle   ChunkHandle
@@ -25,6 +26,9 @@ type PathInfo struct {
 }
 
 const (
-	LeaseExpire       = 1 * time.Minute
-	HeartbeatInterval = 100 * time.Millisecond
+	LeaseExpire        = 1 * time.Minute
+	HeartbeatInterval  = 100 * time.Millisecond
+	MaxChunkSize       = 64 << 20
+	MaxAppendSize      = MaxChunkSize / 4
+	DefaultNumReplicas = 3
 )

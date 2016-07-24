@@ -13,8 +13,8 @@ type downloadItem struct {
 }
 
 type downloadBuffer struct {
-	lock   sync.RWMutex
-	buffer map[llgfs.DataBufferId]downloadItem
+	sync.RWMutex
+	buffer map[llgfs.DataBufferID]downloadItem
 	expire time.Duration
 	tick   time.Duration
 }
@@ -29,29 +29,25 @@ func newDownloadBuffer(expire, tick time.Duration) *downloadBuffer {
 		ticker := time.Tick(tick)
 		for {
 			<-ticker
-			buf.lock.Lock()
+			buf.Lock()
 			now := time.Now()
 			for key, item := range buf.buffer {
 				if item.expire.Before(now) {
 					delete(buf.buffer, key)
 				}
 			}
-			buf.lock.Unlock()
+			buf.Unlock()
 		}
 	}()
 
 	return buf
 }
 
-func (buf *downloadBuffer) Set(id llgfs.DataBufferId, data []byte) {
-	buf.lock.Lock()
-	defer buf.lock.Unlock()
+func (buf *downloadBuffer) Set(id llgfs.DataBufferID, data []byte) {
 	buf.buffer[id] = downloadItem{data, time.Now().Add(buf.expire)}
 }
 
-func (buf *downloadBuffer) Get(id llgfs.DataBufferId) ([]byte, bool) {
-	buf.lock.Lock()
-	defer buf.lock.Unlock()
+func (buf *downloadBuffer) Get(id llgfs.DataBufferID) ([]byte, bool) {
 	item, ok := buf.buffer[id]
 	if !ok {
 		return nil, ok
@@ -60,8 +56,6 @@ func (buf *downloadBuffer) Get(id llgfs.DataBufferId) ([]byte, bool) {
 	return item.data, ok
 }
 
-func (buf *downloadBuffer) Delete(id llgfs.DataBufferId) {
-	buf.lock.Lock()
-	defer buf.lock.Unlock()
+func (buf *downloadBuffer) Delete(id llgfs.DataBufferID) {
 	delete(buf.buffer, id)
 }
