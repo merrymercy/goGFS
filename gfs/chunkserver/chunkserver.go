@@ -51,12 +51,14 @@ func NewAndServe(addr, masterAddr gfs.ServerAddress, serverRoot string) *ChunkSe
 	}
 	cs.l = l
 
+	shutdown := make(chan bool)
 	// RPC Handler
 	go func() {
 	loop:
 		for {
 			select {
 			case <-cs.shutdown:
+				shutdown <- true
 				break loop
 			default:
 			}
@@ -74,7 +76,13 @@ func NewAndServe(addr, masterAddr gfs.ServerAddress, serverRoot string) *ChunkSe
 
 	// Heartbeat
 	go func() {
+	loop:
 		for {
+			select {
+			case <-shutdown:
+				break loop
+			default:
+			}
 			pe := cs.pendingExtensions.GetAllAndClear()
 			le := make([]gfs.ChunkHandle, len(pe))
 			for i, v := range pe {
@@ -96,6 +104,11 @@ func NewAndServe(addr, masterAddr gfs.ServerAddress, serverRoot string) *ChunkSe
 	log.Infof("ChunkServer is now running. addr = %v, root path = %v, master addr = %v", addr, serverRoot, masterAddr)
 
 	return cs
+}
+
+// Shutdown shuts the chunkserver down
+func (cs *ChunkServer) Shutdown() {
+	cs.shutdown <- true
 }
 
 // RPCPushDataAndForward is called by client.

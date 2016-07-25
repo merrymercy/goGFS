@@ -62,6 +62,11 @@ func NewAndServe(address gfs.ServerAddress) *Master {
 	return m
 }
 
+// Shutdown shuts down master
+func (m *Master) Shutdown() {
+	m.shutdown <- true
+}
+
 // RPCHeartbeat is called by chunkserver to let the master know that a chunkserver is alive
 func (m *Master) RPCHeartbeat(args gfs.HeartbeatArg, reply *gfs.HeartbeatReply) error {
 	m.csm.Heartbeat(args.Address)

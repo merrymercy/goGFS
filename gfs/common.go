@@ -28,7 +28,7 @@ type PathInfo struct {
 const (
 	LeaseExpire        = 1 * time.Minute
 	HeartbeatInterval  = 100 * time.Millisecond
-	MaxChunkSize       = 64 << 20
+	MaxChunkSize       = 512 << 10 //64 << 20
 	MaxAppendSize      = MaxChunkSize / 4
 	DefaultNumReplicas = 3
 )

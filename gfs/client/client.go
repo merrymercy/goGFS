@@ -11,6 +11,13 @@ type Client struct {
 	master gfs.ServerAddress
 }
 
+// NewClient returns a new gfs client.
+func NewClient(master gfs.ServerAddress) *Client {
+	return &Client{
+		master: master,
+	}
+}
+
 // GetChunkHandle returns the chunk handle of (path, index).
 // If the chunk doesn't exist, master will create one.
 func (c *Client) GetChunkHandle(path gfs.Path, index gfs.ChunkIndex) (gfs.ChunkHandle, error) {
@@ -69,4 +76,8 @@ func (c *Client) AppendChunk(handle gfs.ChunkHandle, data []byte) (offset gfs.Of
 	err = util.Call(l.Primary, "ChunkServer.RPCAppendChunk", acargs, &a)
 	offset = a.Offset
 	return
+}
+
+func (c *Client) Write(path gfs.Path, offset gfs.Offset, data []byte) error {
+
 }
