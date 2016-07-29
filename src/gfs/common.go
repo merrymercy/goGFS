@@ -27,22 +27,25 @@ type PathInfo struct {
 
 type MutationType int
 const (
-    MutationWrite  = iota
+    MutationWrite = iota
     MutationAppend
     MutationPad
 )
 
 type ErrorCode int
+const (
+    Success = iota
+    UnknownError
+    AppendExceedChunkSize
+    WriteExceedChunkSize
+    ReadEOF
+    NotAvailableForCopy
+)
+// extended error type with error code
 type Error struct {
     Code    ErrorCode
     Err     string
 }
-// error code constants
-const (
-    UnknownError          = iota
-    AppendExceedChunkSize
-    WriteExceedChunkSize
-)
 
 func (e Error) Error() string {
     return e.Err
@@ -50,11 +53,16 @@ func (e Error) Error() string {
 
 // system config
 const (
-	LeaseExpire        = 1 * time.Minute
+	LeaseExpire        = 2 * time.Second //1 * time.Minute
 	HeartbeatInterval  = 100 * time.Millisecond
-	MaxChunkSize       = 1 << 6 // 512KB DEBUG ONLY 64 << 20
+    BackgroundInterval = 200 * time.Millisecond //
+    ServerTimeout      = 1 * time.Second
+
+	MaxChunkSize       = 1 << 8 // 512KB DEBUG ONLY 64 << 20
 	MaxAppendSize      = MaxChunkSize / 4
+
 	DefaultNumReplicas = 3
+    MinimumNumReplicas = 3
 
     DownloadBufferExpire = 2 * time.Minute
     DownloadBufferTick   = 10 * time.Second

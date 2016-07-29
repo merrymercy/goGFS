@@ -12,19 +12,22 @@ import (
 
 // chunkManager manges chunks
 type chunkManager struct {
-	lock      sync.RWMutex
-	batchLock bool
+	sync.RWMutex
 
 	chunk map[gfs.ChunkHandle]*chunkInfo
 	file  map[gfs.Path]*fileInfo
 
+    replicasNeedList []gfs.ChunkHandle // list of handles need a new replicas
+                                       // (happends when some servers are disconneted)
 	numChunkHandle gfs.ChunkHandle
 }
 
 type chunkInfo struct {
+    sync.RWMutex
 	location util.ArraySet     // set of replica locations
 	primary  gfs.ServerAddress // primary chunkserver
 	expire   time.Time         // lease expire time
+    path     gfs.Path
 }
 
 type fileInfo struct {
@@ -46,31 +49,10 @@ func newChunkManager() *chunkManager {
 	return cm
 }
 
-
-func (cm *chunkManager) Lock() {
-	cm.lock.Lock()
-	cm.batchLock = true
-}
-
-func (cm *chunkManager) Unlock() {
-	cm.lock.Unlock()
-	cm.batchLock = false
-}
-
-func (cm *chunkManager) RLock() {
-	cm.lock.RLock()
-	cm.batchLock = true
-}
-
-func (cm *chunkManager) RUnlock() {
-	cm.lock.RUnlock()
-	cm.batchLock = false
-}
-
 // RegisterReplica adds a replica for a chunk
 func (cm *chunkManager) RegisterReplica(handle gfs.ChunkHandle, addr gfs.ServerAddress) error {
-    cm.Lock()
-    defer cm.Unlock()
+    //cm.Lock()
+    //defer cm.Unlock()
 
     chunkinfo, ok := cm.chunk[handle]
     if !ok {
@@ -120,6 +102,9 @@ func (cm *chunkManager) GetLeaseHolder(handle gfs.ChunkHandle) (*lease, error) {
     chunkinfo, ok := cm.chunk[handle]
     if !ok { return nil, fmt.Errorf("invalid chunk handle %v", handle) }
 
+    chunkinfo.Lock()
+    defer chunkinfo.Unlock()
+
     if chunkinfo.expire.Before(time.Now()) { // grants a new lease
         chunkinfo.primary = chunkinfo.location.RandomPick().(gfs.ServerAddress)
         chunkinfo.expire = time.Now().Add(gfs.LeaseExpire)
@@ -136,20 +121,23 @@ func (cm *chunkManager) GetLeaseHolder(handle gfs.ChunkHandle) (*lease, error) {
 }
 
 // ExtendLease extends the lease of chunk if the lease holder is primary.
-func (cm *chunkManager) ExtendLease(handle gfs.ChunkHandle, primary gfs.ServerAddress) (*time.Time, error) {
+func (cm *chunkManager) ExtendLease(handle gfs.ChunkHandle, primary gfs.ServerAddress) error {
     cm.Lock()
     defer cm.Unlock()
 
-    chunkinfo, ok := cm.chunk[handle]
-    if !ok { return nil, fmt.Errorf("invalid chunk handle %v", handle) }
+    ck, ok := cm.chunk[handle]
+    if !ok { return fmt.Errorf("invalid chunk handle %v", handle) }
 
-    // TODO
-    _ = chunkinfo
-
-    return nil, nil
+	now := time.Now()
+	if ck.primary != primary && ck.expire.After(now) {
+		return fmt.Errorf("%v does not hold the lease for chunk %v", primary, handle)
+	}
+	ck.primary = primary
+	ck.expire = now.Add(gfs.LeaseExpire)
+    return nil
 }
 
-// CreateChunk creates a new chunk for path. The index must be the next chunk of the path.
+// CreateChunk creates a new chunk for path.
 func (cm *chunkManager) CreateChunk(path gfs.Path, addrs []gfs.ServerAddress) (gfs.ChunkHandle, error) {
     cm.Lock()
     defer cm.Unlock()
@@ -166,7 +154,53 @@ func (cm *chunkManager) CreateChunk(path gfs.Path, addrs []gfs.ServerAddress) (g
     fileinfo.handles = append(fileinfo.handles, handle)
 
     // update chunk info
-    cm.chunk[handle] = new(chunkInfo)
+    cm.chunk[handle] = &chunkInfo{path : path}
+    for _,v := range addrs {
+        chunkinfo := cm.chunk[handle]
+        chunkinfo.location.Add(v)
+    }
 
     return handle, nil
+}
+
+// RemoveChunks removes disconnected chunks
+// if replicas number of a chunk is less than gfs.MininumNumReplicas, add it to need list
+func (cm *chunkManager) RemoveChunks(handles []gfs.ChunkHandle, server gfs.ServerAddress) error {
+    cm.Lock()
+    defer cm.Unlock()
+
+    for _, v := range handles {
+        ck := cm.chunk[v]
+        ck.location.Delete(server)
+        ck.expire = time.Now()
+
+        if ck.location.Size() == 0 {
+            return fmt.Errorf("Lose all replicas of chunk %v", v)
+        } else if ck.location.Size() < gfs.MinimumNumReplicas {
+            cm.replicasNeedList = append(cm.replicasNeedList, v)
+        }
+    }
+    return nil
+}
+
+// GetNeedList clears the need list at first (removes the old handles that nolonger need replicas)
+// and then return all new handles
+func (cm *chunkManager) GetNeedlist() []gfs.ChunkHandle {
+    cm.Lock()
+    defer cm.Unlock()
+
+    // clear list
+    var newlist []gfs.ChunkHandle
+    for _, v := range cm.replicasNeedList {
+        if cm.chunk[v].location.Size() < gfs.MinimumNumReplicas {
+            newlist = append(newlist, v)
+        }
+    }
+    cm.replicasNeedList = newlist
+
+    if len(cm.replicasNeedList) > 0 {
+        return cm.replicasNeedList
+    } else {
+        return nil
+    }
 }

@@ -25,6 +25,18 @@ func (s *ArraySet) Add(element interface{}) {
 	s.arr = append(s.arr, element)
 }
 
+// Delete delete an element in the set.
+func (s *ArraySet) Delete(element interface{}) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+    for i, v := range s.arr {
+        if v == element {
+            s.arr = append(s.arr[:i], s.arr[i+1:]...)
+            break
+        }
+    }
+}
+
 // Size returns the size of the set.
 func (s *ArraySet) Size() int {
 	s.lock.RLock()

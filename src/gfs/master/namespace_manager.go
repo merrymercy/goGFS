@@ -50,8 +50,6 @@ func (nm *namespaceManager) lockParents(p string) ([]string, *nsTree, error) {
 		cwd = c
 		cwd.RLock()
 	}
-    cwd.RUnlock()
-    cwd.Lock()
 	return ps, cwd, nil
 }
 
@@ -59,7 +57,7 @@ func (nm *namespaceManager) lockParents(p string) ([]string, *nsTree, error) {
 // it just stops and returns. This is the inverse of lockParents.
 func (nm *namespaceManager) unlockParents(ps []string) {
 	cwd := nm.root
-	cwd.Unlock()
+	cwd.RUnlock()
 	for _, name := range ps[:len(ps)-1] {
 		c, ok := cwd.children[name]
 		if !ok {
@@ -75,7 +73,12 @@ func (nm *namespaceManager) Create(p string) error {
 	ps, cwd, err := nm.lockParents(p)
 	defer nm.unlockParents(ps)
 
-    log.Warning(ps, cwd)
+    // lock cwd, ugly, just to fit lockParents and unlockParents
+    cwd.RUnlock()
+    defer cwd.RLock()
+    cwd.Lock()
+    defer cwd.Unlock()
+
 	if err != nil {
 		return err
 	}
@@ -96,6 +99,13 @@ func (nm *namespaceManager) Mkdir(p string) error {
 	if _, ok := cwd.children[p]; ok {
 		return fmt.Errorf("path %s already exists", p)
 	}
+
+    // lock cwd, ugly, just to fit lockParents and unlockParents
+    cwd.RUnlock()
+    defer cwd.RLock()
+    cwd.Lock()
+    defer cwd.Unlock()
+
     cwd.children[ps[len(ps)-1]] = &nsTree{isDir:    true,
                                           children: make(map[string]*nsTree)}
 	return nil

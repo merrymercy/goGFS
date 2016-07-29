@@ -32,12 +32,18 @@ func CallAll(dst []gfs.ServerAddress, rpcname string, args interface{}) error {
 			ch <- Call(addr, rpcname, args, nil)
 		}(d)
 	}
+    errList := ""
 	for _ = range dst {
 		if err := <-ch; err != nil {
-            return err
+            errList += err.Error() + ";"
 		}
 	}
-	return nil
+    
+    if errList == "" {
+        return nil
+    } else {
+        return fmt.Errorf(errList)
+    }
 }
 
 // Sample randomly chooses k elements from {0, 1, ..., n-1}.

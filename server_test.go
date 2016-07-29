@@ -7,6 +7,7 @@ import (
 	"github.com/abcdabcd987/llgfs/gfs/master"
 
     "fmt"
+    "io"
 	"io/ioutil"
 	log "github.com/Sirupsen/logrus"
 	"os"
@@ -44,6 +45,7 @@ const (
 )
 
 func PrintFinalFile() {
+    time.Sleep(gfs.LeaseExpire * 2)
     cs1.PrintSelf()
     cs2.PrintSelf()
     cs3.PrintSelf()
@@ -57,6 +59,18 @@ func TestCreateFile(t *testing.T) {
     time.Sleep(25 * time.Second)
 }
 
+func TestReReplication(t *testing.T) {
+    err := c1.Create(testfile1)
+    if err != nil { t.Error(err) }
+
+    c1.Append(testfile1, []byte("Hello"))
+
+    cs1.Shutdown()
+    cs2.Shutdown()
+
+    PrintFinalFile()
+}
+
 func TestAppendFile(t *testing.T) {
     err := c1.Create(testfile2)
     if err != nil { t.Error(err) }
@@ -66,23 +80,27 @@ func TestAppendFile(t *testing.T) {
 
     for i := 0; i < n; i++ {
         go func(x int) {
-            _, err = c1.Append(testfile1, []byte(fmt.Sprintf("%2d", x)))
+            _, err = c1.Append(testfile1, []byte(fmt.Sprintf("%3d", x)))
             ch <- err
         }(i)
     }
     for i := 0; i < n; i++ {
         go func(x int) {
-            _, err = c2.Append(testfile2, []byte(fmt.Sprintf("%2d", x + 20)))
+            _, err = c2.Append(testfile2, []byte(fmt.Sprintf("-%3d-", x + 20)))
             ch <- err
         }(i)
     }
 
-    for i := 0; i < 2 * n; i++ {
+    cs2.Shutdown()
+    cs3.Shutdown()
+
+    for i := 0; i < 1 * n; i++ {
         if err := <-ch; err != nil {
             t.Error(err)
         }
     }
 
+    time.Sleep(5000 * time.Millisecond)
     PrintFinalFile()
 }
 
@@ -104,6 +122,9 @@ func TestWriteFile(t *testing.T) {
         }(i)
     }
 
+    cs2.Shutdown()
+    cs3.Shutdown()
+
     for i := 0; i < 2 * n; i++ {
         if err := <-ch; err != nil {
             t.Error(err)
@@ -113,9 +134,78 @@ func TestWriteFile(t *testing.T) {
     PrintFinalFile()
 }
 
-func TestReadFile(t *testing.T) {
+func TestReadFile(t * testing.T) {
+    err := c1.Create(testfile2)
+    if err != nil { t.Error(err) }
+    err = c2.Create(testfile1)
+    if err != nil { t.Error(err) }
+
+    // write file
+    c1.Write(testfile1, gfs.Offset(0), []byte("1.2.3.4.5.6.7.8.9.10.11.12.13.14.15.16.17.18.19.20.21.22"))
+    c2.Write(testfile2, gfs.Offset(0), []byte("A.B.C.D.E.F.G.H.I.J.K.L.M.N.O.P.Q.R.S.T.U.V.W.X.Y.Z"))
+
+    cs2.Shutdown()
+    cs3.Shutdown()
+
+    // read file
+    ch := make(chan error, n)
+    for i := 0; i < n; i++ {
+        go func(x int) {
+            buf := make([]byte, 64)
+            n, err := c1.Read(testfile1, gfs.Offset(x * 2), buf)
+            log.Infof("read %v at %v : %v (ret : %v, %v)", testfile1, x * 2, string(buf), n, err)
+            ch <- err
+        }(i)
+    }
+    for i := 0; i < n; i++ {
+        go func(x int) {
+            buf := make([]byte, 64)
+            n, err := c2.Read(testfile2, gfs.Offset(x * 2), buf)
+            log.Infof("read %v at %v : %v (ret: %v, %v)", testfile2, x * 2, string(buf), n, err)
+            ch <- err
+        }(i)
+    }
 
 
+    for i := 0; i < 2 * n; i++ {
+        if err := <-ch; err != nil && err != io.EOF {
+            t.Error(err)
+        }
+    }
+
+    PrintFinalFile()
+}
+
+func TestMixFile(t *testing.T) {
+    err := c1.Create(testfile2)
+    if err != nil { t.Error(err) }
+    err = c2.Create(testfile1)
+    if err != nil { t.Error(err) }
+    ch := make(chan error)
+
+    for i := 0; i < n; i++ {
+        go func(x int) {
+            _, err = c1.Append(testfile1, []byte(fmt.Sprintf("-%d-", x)))
+            ch <- err
+        }(i)
+    }
+
+    for i := 0; i < n; i++ {
+        go func(x int) {
+            ch <- c1.Write(testfile2, gfs.Offset(2), []byte(fmt.Sprintf("hh")))
+        }(i)
+    }
+
+    cs2.Shutdown()
+    cs3.Shutdown()
+
+    for i := 0; i < 2 * n; i++ {
+        if err := <-ch; err != nil {
+            t.Error(err)
+        }
+    }
+
+    PrintFinalFile()
 }
 
 func TestMain(m *testing.M) {
@@ -141,12 +231,12 @@ func TestMain(m *testing.M) {
     ret := m.Run()
 
     // shutdown
-	cs5.Shutdown()
+	/*cs5.Shutdown()
 	cs4.Shutdown()
 	cs3.Shutdown()
 	cs2.Shutdown()
 	cs1.Shutdown()
-	mr.Shutdown()
+	mr.Shutdown()*/
 	os.RemoveAll(root)
 
 	// run tests
