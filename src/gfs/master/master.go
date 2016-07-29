@@ -71,15 +71,7 @@ func (m *Master) InitMetadata() {
     m.nm =  newNamespaceManager()
     m.cm  = newChunkManager()
     m.csm = newChunkServerManager()
-
     return
-    // for test
-    if err := m.nm.Mkdir("/data") ; err != nil {
-        log.Fatal(err)
-    }
-    if err := m.nm.Create("/data/test.txt"); err != nil {
-        log.Fatal(err)
-    }
 }
 
 // Shutdown shuts down master
@@ -142,9 +134,10 @@ func (m *Master) RPCGetFileInfo(args gfs.GetFileInfoArg, reply *gfs.GetFileInfoR
     defer m.nm.unlockParents(ps)
     if (err != nil) { return err }
 
-    reply.IsDir  = cwd.isDir
-    reply.Length = cwd.length
-    reply.Chunks = cwd.chunks
+    file := cwd.children[ps[len(ps)-1]]
+    reply.IsDir  = file.isDir
+    reply.Length = file.length
+    reply.Chunks = file.chunks
     return nil
 }
 
@@ -155,13 +148,10 @@ func (m *Master) RPCGetChunkHandle(args gfs.GetChunkHandleArg, reply *gfs.GetChu
     defer m.nm.unlockParents(ps)
     if err != nil { return err }
 
-    if int(args.Index) == -1  {
-        args.Index = gfs.ChunkIndex(cwd.chunks - 1)
-    }
-
     // append new chunks
-    if int(args.Index) == -1 || int(args.Index) == int(cwd.chunks) {
-        cwd.chunks++
+    file := cwd.children[ps[len(ps)-1]]
+    if int(args.Index) == int(file.chunks) {
+        file.chunks++
         addrs, err := m.csm.ChooseServers(gfs.DefaultNumReplicas)
         if err != nil { return err }
         reply.Handle, err = m.cm.CreateChunk(args.Path, addrs)

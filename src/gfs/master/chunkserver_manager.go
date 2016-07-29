@@ -47,6 +47,9 @@ func (csm *chunkServerManager) Heartbeat(addr gfs.ServerAddress) {
 
 // register chunk to servers
 func (csm *chunkServerManager) AddChunk(addrs []gfs.ServerAddress, handle gfs.ChunkHandle) error {
+    csm.Lock()
+    defer csm.Unlock()
+
     for _, v := range addrs {
         csm.servers[v].chunks[handle] = true
     }
@@ -58,7 +61,6 @@ func (csm *chunkServerManager) AddChunk(addrs []gfs.ServerAddress, handle gfs.Ch
 // get servers to store new chunk
 // TODO : allocation strategy and error handle
 func (csm *chunkServerManager) ChooseServers(num int) ([]gfs.ServerAddress, error) {
-
     if num > len(csm.servers) {
         return nil, fmt.Errorf("no enough servers for %v replicas", num)
     }

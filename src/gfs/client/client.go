@@ -59,31 +59,28 @@ func (c *Client) WriteChunk(handle gfs.ChunkHandle, offset gfs.Offset, data []by
 // <code>len(data)</code> should be within 1/4 chunk size.
 func (c *Client) AppendChunk(handle gfs.ChunkHandle, data []byte) (offset gfs.Offset, err error) {
 	if len(data) > gfs.MaxAppendSize {
-		return 0, fmt.Errorf("len(data) = %v > max append size %v", len(data), gfs.MaxAppendSize)
-	}
-	var l gfs.GetPrimaryAndSecondariesReply
-	err = util.Call(c.master, "Master.RPCGetPrimaryAndSecondaries", gfs.GetPrimaryAndSecondariesArg{handle}, &l)
-	if err != nil {
-		return
+		return 0, gfs.Error{gfs.UnknownError, fmt.Sprintf("len(data) = %v > max append size %v", len(data), gfs.MaxAppendSize)}
 	}
 
-    log.Infof("Client : push data to primary")
+	var l gfs.GetPrimaryAndSecondariesReply
+	err = util.Call(c.master, "Master.RPCGetPrimaryAndSecondaries", gfs.GetPrimaryAndSecondariesArg{handle}, &l)
+	if err != nil { return }
+
+    log.Infof("Client : push data to primary %v", data[:2])
 	var d gfs.PushDataAndForwardReply
 	err = util.Call(l.Primary, "ChunkServer.RPCPushDataAndForward", gfs.PushDataAndForwardArg{handle, data, l.Secondaries}, &d)
-	if err != nil {
-		return
-	}
+	if err != nil { return }
 
     log.Infof("Client : send append request to primary. data : %v", d.DataID)
 	var a gfs.AppendChunkReply
 	acargs := gfs.AppendChunkArg{d.DataID, l.Secondaries}
 	err = util.Call(l.Primary, "ChunkServer.RPCAppendChunk", acargs, &a)
+
+    if a.ErrorCode == gfs.AppendExceedChunkSize {
+        err = gfs.Error{a.ErrorCode, "append over chunks"}
+    }
 	offset = a.Offset
 	return
-}
-
-func (c *Client) Write(path gfs.Path, offset gfs.Offset, data []byte) error {
-    return nil
 }
 
 func (c *Client) Create(path gfs.Path) error {
@@ -98,16 +95,77 @@ func (c *Client) Append(path gfs.Path, data []byte) (offset gfs.Offset, err erro
 		return 0, fmt.Errorf("len(data) = %v > max append size %v", len(data), gfs.MaxAppendSize)
 	}
 
-    var h gfs.GetChunkHandleReply
-
-    err = util.Call(c.master, "Master.RPCGetChunkHandle", gfs.GetChunkHandleArg{path, -1}, &h)
+    var f gfs.GetFileInfoReply
+    err = util.Call(c.master, "Master.RPCGetFileInfo", gfs.GetFileInfoArg{path}, &f)
     if err != nil { return }
 
+    start := gfs.ChunkIndex(f.Chunks - 1)
+    if (start < 0) { start = 0 }
+
     var chunkOffset gfs.Offset
-    chunkOffset, err = c.AppendChunk(h.Handle, data)
-    offset = chunkOffset
+    for {
+        var h gfs.GetChunkHandleReply
+        err = util.Call(c.master, "Master.RPCGetChunkHandle", gfs.GetChunkHandleArg{path, start}, &h)
+        if err != nil { return }
+
+        chunkOffset, err = c.AppendChunk(h.Handle, data)
+        if err == nil || err.(gfs.Error).Code != gfs.AppendExceedChunkSize {
+            break
+        }
+
+        // retry in next chunk
+        start++
+        log.Warning("Try on next chunk ", start )
+    }
+
+    if err != nil { return }
+
+    offset = gfs.Offset(start) * gfs.MaxChunkSize + chunkOffset
     return
 }
+
+func (c *Client) Write(path gfs.Path, offset gfs.Offset, data []byte) error {
+    begin := 0
+
+    var f gfs.GetFileInfoReply
+    err := util.Call(c.master, "Master.RPCGetFileInfo", gfs.GetFileInfoArg{path}, &f)
+    if err != nil { return err }
+
+    if int64(offset / gfs.MaxChunkSize) > f.Chunks {
+        return fmt.Errorf("offset exceed file size")
+    }
+
+    for {
+        index := gfs.ChunkIndex(offset / gfs.MaxChunkSize)
+        chunkOffset := offset % gfs.MaxChunkSize
+
+        var h gfs.GetChunkHandleReply
+        err := util.Call(c.master, "Master.RPCGetChunkHandle", gfs.GetChunkHandleArg{path, index}, &h)
+        if err != nil { return err }
+
+        var writeLen int
+        if begin + gfs.MaxChunkSize > len(data) {
+            writeLen = len(data) - begin
+        } else {
+            writeLen = gfs.MaxChunkSize
+        }
+
+        err = c.WriteChunk(h.Handle, chunkOffset, data[begin : begin + writeLen])
+
+        offset += gfs.Offset(writeLen)
+        begin  += writeLen
+
+        if begin == len(data) { break }
+    }
+
+    return nil
+}
+
+func (c *Client) Read(path gfs.Path, offset gfs.Offset, data []byte) (n int, err error) {
+
+    return 0, nil
+}
+
 
     /*
     var f gfs.GetFileInfoReply

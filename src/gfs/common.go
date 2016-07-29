@@ -29,27 +29,30 @@ type MutationType int
 const (
     MutationWrite  = iota
     MutationAppend
+    MutationPad
 )
 
+type ErrorCode int
 type Error struct {
-    Code    int
-    Message string
+    Code    ErrorCode
+    Err     string
 }
 // error code constants
 const (
-    APPEND_EXCEED_CHUNKSIZE = iota
-    WRITE_EXCEED_CHUNKSIZE
+    UnknownError          = iota
+    AppendExceedChunkSize
+    WriteExceedChunkSize
 )
 
 func (e Error) Error() string {
-    return e.Message
+    return e.Err
 }
 
 // system config
 const (
 	LeaseExpire        = 1 * time.Minute
 	HeartbeatInterval  = 100 * time.Millisecond
-	MaxChunkSize       = 512 << 10 // 512KB DEBUG ONLY 64 << 20
+	MaxChunkSize       = 1 << 6 // 512KB DEBUG ONLY 64 << 20
 	MaxAppendSize      = MaxChunkSize / 4
 	DefaultNumReplicas = 3
 

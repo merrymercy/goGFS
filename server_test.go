@@ -6,6 +6,7 @@ import (
 	"github.com/abcdabcd987/llgfs/gfs/client"
 	"github.com/abcdabcd987/llgfs/gfs/master"
 
+    "fmt"
 	"io/ioutil"
 	log "github.com/Sirupsen/logrus"
 	"os"
@@ -17,7 +18,7 @@ import (
 var (
 	mr                      *master.Master
 	cs1, cs2, cs3, cs4, cs5 *chunkserver.ChunkServer
-	c                       *client.Client
+	c1, c2                  *client.Client
 )
 
 func TestRPCGetChunkHandle(t *testing.T) {
@@ -38,26 +39,83 @@ func TestRPCGetChunkHandle(t *testing.T) {
 
 const (
     testfile1 = gfs.Path("/first.txt")
+    testfile2 = gfs.Path("/second.txt")
+    n         = 100
 )
 
+func PrintFinalFile() {
+    cs1.PrintSelf()
+    cs2.PrintSelf()
+    cs3.PrintSelf()
+    cs4.PrintSelf()
+    cs5.PrintSelf()
+}
+
 func TestCreateFile(t *testing.T) {
-    err := c.Create(gfs.Path("/first.txt"))
+    err := c1.Create(gfs.Path("/first.txt"))
     if err != nil { t.Error(err) }
     time.Sleep(25 * time.Second)
 }
 
 func TestAppendFile(t *testing.T) {
-    err := c.Create(testfile1)
+    err := c1.Create(testfile2)
     if err != nil { t.Error(err) }
-    _, err = c.Append(testfile1, []byte("Hello World!"))
+    err = c2.Create(testfile1)
     if err != nil { t.Error(err) }
+    ch := make(chan error)
 
-    time.Sleep(25 * time.Second)
+    for i := 0; i < n; i++ {
+        go func(x int) {
+            _, err = c1.Append(testfile1, []byte(fmt.Sprintf("%2d", x)))
+            ch <- err
+        }(i)
+    }
+    for i := 0; i < n; i++ {
+        go func(x int) {
+            _, err = c2.Append(testfile2, []byte(fmt.Sprintf("%2d", x + 20)))
+            ch <- err
+        }(i)
+    }
+
+    for i := 0; i < 2 * n; i++ {
+        if err := <-ch; err != nil {
+            t.Error(err)
+        }
+    }
+
+    PrintFinalFile()
 }
 
-func TestNull(t *testing.T) {
-    log.Println("Haa")
-    time.Sleep(1500 * time.Millisecond)
+func TestWriteFile(t *testing.T) {
+    err := c1.Create(testfile2)
+    if err != nil { t.Error(err) }
+    err = c2.Create(testfile1)
+    if err != nil { t.Error(err) }
+
+    ch := make(chan error, n)
+    for i := 0; i < n; i++ {
+        go func(x int) {
+            ch <- c1.Write(testfile1, gfs.Offset(x * 2), []byte(fmt.Sprintf("%2d", x)))
+        }(i)
+    }
+    for i := 0; i < n; i++ {
+        go func(x int) {
+            ch <- c2.Write(testfile2, gfs.Offset(x * 2), []byte(fmt.Sprintf("%2d", x + 20)))
+        }(i)
+    }
+
+    for i := 0; i < 2 * n; i++ {
+        if err := <-ch; err != nil {
+            t.Error(err)
+        }
+    }
+
+    PrintFinalFile()
+}
+
+func TestReadFile(t *testing.T) {
+
+
 }
 
 func TestMain(m *testing.M) {
@@ -76,9 +134,10 @@ func TestMain(m *testing.M) {
 	cs5 = chunkserver.NewAndServe(":10005", ":7777", path.Join(root, "cs5"))
 
 	// init client
-	c = client.NewClient(":7777")
+	c1 = client.NewClient(":7777")
+	c2 = client.NewClient(":7777")
 
-    time.Sleep(100 * time.Millisecond)
+    time.Sleep(300 * time.Millisecond)
     ret := m.Run()
 
     // shutdown
@@ -88,7 +147,7 @@ func TestMain(m *testing.M) {
 	cs2.Shutdown()
 	cs1.Shutdown()
 	mr.Shutdown()
-	//os.RemoveAll(root)
+	os.RemoveAll(root)
 
 	// run tests
 	os.Exit(ret)
