@@ -1,19 +1,21 @@
 package master
 
 import (
+    //"fmt"
 	log "github.com/Sirupsen/logrus"
 	"github.com/abcdabcd987/llgfs/gfs"
-	"github.com/abcdabcd987/llgfs/gfs/util"
+	//"github.com/abcdabcd987/llgfs/gfs/util"
 	"net"
 	"net/rpc"
 )
 
 // Master Server struct
 type Master struct {
-	address  gfs.ServerAddress // master server address
-	l        net.Listener
-	shutdown chan bool
+	address       gfs.ServerAddress // master server address
+	l             net.Listener
+	shutdown      chan struct {}
 
+    nm  *namespaceManager
 	cm  *chunkManager
 	csm *chunkServerManager
 }
@@ -21,9 +23,8 @@ type Master struct {
 // NewAndServe starts a master and return the pointer to it.
 func NewAndServe(address gfs.ServerAddress) *Master {
 	m := &Master{
-		address: address,
-		cm:      new(chunkManager),
-		csm:     new(chunkServerManager),
+		address:       address,
+        shutdown:      make(chan struct {}),
 	}
 
 	rpcs := rpc.NewServer()
@@ -34,6 +35,8 @@ func NewAndServe(address gfs.ServerAddress) *Master {
 		log.Exit(1)
 	}
 	m.l = l
+
+    m.InitMetadata()
 
 	// RPC Handler
 	go func() {
@@ -62,85 +65,114 @@ func NewAndServe(address gfs.ServerAddress) *Master {
 	return m
 }
 
+// initiate meta data
+func (m *Master) InitMetadata() {
+    // new or read from old
+    m.nm =  newNamespaceManager()
+    m.cm  = newChunkManager()
+    m.csm = newChunkServerManager()
+
+    return
+    // for test
+    if err := m.nm.Mkdir("/data") ; err != nil {
+        log.Fatal(err)
+    }
+    if err := m.nm.Create("/data/test.txt"); err != nil {
+        log.Fatal(err)
+    }
+}
+
 // Shutdown shuts down master
 func (m *Master) Shutdown() {
-	m.shutdown <- true
+	close(m.shutdown)
+    //m.l.Close()
 }
 
 // RPCHeartbeat is called by chunkserver to let the master know that a chunkserver is alive
 func (m *Master) RPCHeartbeat(args gfs.HeartbeatArg, reply *gfs.HeartbeatReply) error {
-	m.csm.Heartbeat(args.Address)
-	for _, chunk := range args.LeaseExtensions {
-		m.cm.ExtendLease(chunk, args.Address)
-	}
-	return nil
+    m.csm.Heartbeat(args.Address)
+    for _, handle := range args.LeaseExtensions {
+        m.cm.ExtendLease(handle, args.Address)
+    }
+    return nil
 }
-
-// // RPCAddAllChunks is called by chunkserver to adds all chunks from a chunkserver
-// func (m *Master) RPCAddAllChunks(args AddAllChunksArg, reply *AddAllChunksReply) error {
-// 	m.csm.AddChunks(args.Address, args.Chunks)
-// 	for _, v := range args.Chunks {
-// 		m.cm.AddReplica(v, args.Address)
-// 	}
-// 	return nil
-// }
-
-// type AddAllChunksArg struct {
-// 	Address gfs.ServerAddress
-// 	Chunks  []gfs.ChunkHandle
-// }
-
-// type AddAllChunksReply struct{}
 
 // RPCGetPrimaryAndSecondaries returns lease holder and secondaries of a chunk.
 // If no one holds the lease currently, grant one.
 func (m *Master) RPCGetPrimaryAndSecondaries(args gfs.GetPrimaryAndSecondariesArg, reply *gfs.GetPrimaryAndSecondariesReply) error {
-	l, e := m.cm.GetLeaseHolder(args.Handle)
-	if e != nil {
-		return e
-	}
-	reply.Expire = l.expire
-	reply.Primary = l.primary
-	reply.Secondaries = l.secondaries
-	return nil
+    lease, err := m.cm.GetLeaseHolder(args.Handle)
+    if err != nil {
+        return err
+    }
+    reply.Primary = lease.primary
+    reply.Expire  = lease.expire
+    reply.Secondaries = lease.secondaries
+    return nil
 }
 
 // RPCExtendLease extends the lease of chunk if the lessee is nobody or requester.
 func (m *Master) RPCExtendLease(args gfs.ExtendLeaseArg, reply *gfs.ExtendLeaseReply) error {
-	t, err := m.cm.ExtendLease(args.Handle, args.Address)
-	if err != nil {
-		return err
-	}
-	reply.Expire = *t
-	return nil
+    t, err := m.cm.ExtendLease(args.Handle, args.Address)
+    if err != nil { return err }
+    reply.Expire = *t
+    return nil
 }
 
 // RPCGetReplicas is called by client to find all chunkserver that holds the chunk.
 func (m *Master) RPCGetReplicas(args gfs.GetReplicasArg, reply *gfs.GetReplicasReply) error {
-	s, err := m.cm.GetReplicas(args.Handle)
-	if err != nil {
-		return err
-	}
-	var l []gfs.ServerAddress
-	for _, v := range s.GetAll() {
-		l = append(l, v.(gfs.ServerAddress))
-	}
-	reply.Locations = l
-	return nil
+    servers, err := m.cm.GetReplicas(args.Handle)
+    if err != nil { return err }
+
+    for _, v := range servers.GetAll() {
+        reply.Locations = append(reply.Locations, v.(gfs.ServerAddress))
+    }
+
+    return nil
+}
+
+// RPCCreateFile
+func (m *Master) RPCCreateFile(args gfs.CreateFileArg, replay *gfs.CreateFileReply) error {
+    err := m.nm.Create(string(args.Path))
+    return err
+}
+
+// RPCGetFileInfo
+func (m *Master) RPCGetFileInfo(args gfs.GetFileInfoArg, reply *gfs.GetFileInfoReply) error {
+    ps, cwd, err := m.nm.lockParents(string(args.Path))
+    defer m.nm.unlockParents(ps)
+    if (err != nil) { return err }
+
+    reply.IsDir  = cwd.isDir
+    reply.Length = cwd.length
+    reply.Chunks = cwd.chunks
+    return nil
 }
 
 // RPCGetChunkHandle returns the chunk handle of (path, index).
 // If the requested index is bigger than the number of chunks of this path by one, create one.
-// Otherwise, an error will occur.
 func (m *Master) RPCGetChunkHandle(args gfs.GetChunkHandleArg, reply *gfs.GetChunkHandleReply) error {
-	handle, err := m.cm.CreateChunk(args.Path, args.Index)
-	if err != nil {
-		return err
-	}
-	srvs, err := m.csm.Sample(gfs.DefaultNumReplicas)
-	if err != nil {
-		return err
-	}
-	err = util.CallAll(srvs, "ChunkServer.RPCCreateChunk", gfs.CreateChunkArg{handle})
-	return err
+    ps, cwd, err := m.nm.lockParents(string(args.Path))
+    defer m.nm.unlockParents(ps)
+    if err != nil { return err }
+
+    if int(args.Index) == -1  {
+        args.Index = gfs.ChunkIndex(cwd.chunks - 1)
+    }
+
+    // append new chunks
+    if int(args.Index) == -1 || int(args.Index) == int(cwd.chunks) {
+        cwd.chunks++
+        addrs, err := m.csm.ChooseServers(gfs.DefaultNumReplicas)
+        if err != nil { return err }
+        reply.Handle, err = m.cm.CreateChunk(args.Path, addrs)
+        for _, v := range addrs {
+            m.cm.RegisterReplica(reply.Handle, v)
+        }
+        if err != nil { return err }
+        err = m.csm.AddChunk(addrs, reply.Handle)
+    } else {
+        reply.Handle, err = m.cm.GetChunk(args.Path, args.Index)
+    }
+
+    return err
 }

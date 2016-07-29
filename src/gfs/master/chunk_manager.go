@@ -1,10 +1,11 @@
 package master
 
 import (
-	"fmt"
+    "fmt"
 	"sync"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/abcdabcd987/llgfs/gfs"
 	"github.com/abcdabcd987/llgfs/gfs/util"
 )
@@ -27,7 +28,7 @@ type chunkInfo struct {
 }
 
 type fileInfo struct {
-	index []gfs.ChunkHandle
+	handles []gfs.ChunkHandle
 }
 
 type lease struct {
@@ -35,6 +36,16 @@ type lease struct {
 	expire      time.Time
 	secondaries []gfs.ServerAddress
 }
+
+func newChunkManager() *chunkManager {
+	cm := &chunkManager{
+        chunk: make(map[gfs.ChunkHandle]*chunkInfo),
+        file : make(map[gfs.Path]*fileInfo),
+	}
+    log.Info("---------new chunk manager")
+	return cm
+}
+
 
 func (cm *chunkManager) Lock() {
 	cm.lock.Lock()
@@ -58,151 +69,104 @@ func (cm *chunkManager) RUnlock() {
 
 // RegisterReplica adds a replica for a chunk
 func (cm *chunkManager) RegisterReplica(handle gfs.ChunkHandle, addr gfs.ServerAddress) error {
-	if !cm.batchLock {
-		cm.lock.RLock()
-		defer cm.lock.RUnlock()
-	}
+    cm.Lock()
+    defer cm.Unlock()
 
-	c, ok := cm.chunk[handle]
-	if !ok {
-		return fmt.Errorf("chunk %v not found", handle)
-	}
-	c.location.Add(addr)
-	return nil
+    chunkinfo, ok := cm.chunk[handle]
+    if !ok {
+        return fmt.Errorf("cannot find chunk %d", int64(handle))
+    }
+    chunkinfo.location.Add(addr)
+    return nil
 }
 
 // GetReplicas returns the replicas of a chunk
 func (cm *chunkManager) GetReplicas(handle gfs.ChunkHandle) (*util.ArraySet, error) {
-	if !cm.batchLock {
-		cm.lock.RLock()
-		defer cm.lock.RUnlock()
-	}
+    cm.RLock()
+    defer cm.RUnlock()
 
-	c, ok := cm.chunk[handle]
-	if !ok {
-		return nil, fmt.Errorf("chunk %v not found", handle)
-	}
-	return &c.location, nil
+    chunkinfo, ok := cm.chunk[handle]
+    if !ok {
+        return nil, fmt.Errorf("cannot find chunk %d", int64(handle))
+    }
+    return &chunkinfo.location, nil
 }
-
-// // AddChunk add a chunk for (path, index) with replicas. If there already exists
-// // a chunk for (path, index), no new chunk will be added.
-// func (cm *chunkManager) AddChunk(path string, index int64, replicas []gfs.ServerAddress) gfs.ChunkHandle {
-// 	if !cm.batchLock {
-// 		cm.lock.RLock()
-// 		defer cm.lock.RUnlock()
-// 	}
-
-// 	p := filePair{path, index}
-// 	h, ok := cm.file[p]
-// 	if ok {
-// 		return h
-// 	}
-
-// 	c := chunkInfo{}
-// 	for _, rep := range replicas {
-// 		c.location.Add(rep)
-// 	}
-// 	h = cm.nextChunkHandle
-// 	cm.nextChunkHandle++
-// 	cm.file[p] = h
-// 	cm.chunk[h] = c
-
-// 	return h
-// }
 
 // GetChunk returns the chunk handle for (path, index).
 func (cm *chunkManager) GetChunk(path gfs.Path, index gfs.ChunkIndex) (gfs.ChunkHandle, error) {
-	if !cm.batchLock {
-		cm.lock.RLock()
-		defer cm.lock.RUnlock()
-	}
+    cm.RLock()
+    defer cm.RUnlock()
 
-	if f, ok := cm.file[path]; ok && len(f.index) > int(index) {
-		return f.index[index], nil
-	}
-	return 0, fmt.Errorf("no chunk for path %s index %d", path, index)
+    fileinfo, ok := cm.file[path]
+    if !ok {
+        return -1, fmt.Errorf("cannot get handle for %v[%v]", path, index)
+    }
+
+    if index < 0 || int(index) >= len(fileinfo.handles) {
+        return -1, fmt.Errorf("Invalid index for %v[%v]", path, index)
+    }
+
+    return fileinfo.handles[index], nil
 }
 
 // GetLeaseHolder returns the chunkserver that hold the lease of a chunk
 // (i.e. primary) and expire time of the lease. If no one has a lease,
 // grants one to a replica it chooses.
 func (cm *chunkManager) GetLeaseHolder(handle gfs.ChunkHandle) (*lease, error) {
-	if !cm.batchLock {
-		cm.lock.RLock()
-		defer cm.lock.RUnlock()
-	}
+    cm.RLock()
+    defer cm.RUnlock()
 
-	c, ok := cm.chunk[handle]
-	if !ok {
-		return nil, fmt.Errorf("chunk %v not found", handle)
-	}
+    ret := &lease{}
+    chunkinfo, ok := cm.chunk[handle]
+    if !ok { return nil, fmt.Errorf("invalid chunk handle %v", handle) }
 
-	// if lease expired or no lease holder
-	now := time.Now()
-	if c.expire.Before(now) {
-		if c.location.Size() == 0 {
-			return nil, fmt.Errorf("no replica available for chunk %v", handle)
-		}
+    if chunkinfo.expire.Before(time.Now()) { // grants a new lease
+        chunkinfo.primary = chunkinfo.location.RandomPick().(gfs.ServerAddress)
+        chunkinfo.expire = time.Now().Add(gfs.LeaseExpire)
+    }
 
-		c.primary = c.location.RandomPick().(gfs.ServerAddress)
-		c.expire = now.Add(gfs.LeaseExpire)
-	}
-
-	var snd []gfs.ServerAddress
-	for _, v := range c.location.GetAll() {
-		if addr := v.(gfs.ServerAddress); addr != c.primary {
-			snd = append(snd, addr)
-		}
-	}
-
-	return &lease{c.primary, c.expire, snd}, nil
+    ret.primary = chunkinfo.primary
+    ret.expire = chunkinfo.expire
+    for _, v := range chunkinfo.location.GetAll() {
+        if vv := v.(gfs.ServerAddress); vv != chunkinfo.primary {
+            ret.secondaries = append(ret.secondaries, vv)
+        }
+    }
+    return ret, nil
 }
 
-// ExtendLease extends the lease of chunk if the lease holder is nobody or primary.
+// ExtendLease extends the lease of chunk if the lease holder is primary.
 func (cm *chunkManager) ExtendLease(handle gfs.ChunkHandle, primary gfs.ServerAddress) (*time.Time, error) {
-	if !cm.batchLock {
-		cm.lock.RLock()
-		defer cm.lock.RUnlock()
-	}
+    cm.Lock()
+    defer cm.Unlock()
 
-	c, ok := cm.chunk[handle]
-	if !ok {
-		return nil, fmt.Errorf("chunk %v not found", handle)
-	}
+    chunkinfo, ok := cm.chunk[handle]
+    if !ok { return nil, fmt.Errorf("invalid chunk handle %v", handle) }
 
-	now := time.Now()
-	if c.primary != primary && c.expire.After(now) {
-		return nil, fmt.Errorf("%v does not hold the lease for chunk %v", primary, handle)
-	}
-	c.primary = primary
-	c.expire = now.Add(gfs.LeaseExpire)
-	return &c.expire, nil
+    // TODO
+    _ = chunkinfo
+
+    return nil, nil
 }
 
 // CreateChunk creates a new chunk for path. The index must be the next chunk of the path.
-func (cm *chunkManager) CreateChunk(path gfs.Path, index gfs.ChunkIndex) (gfs.ChunkHandle, error) {
-	if !cm.batchLock {
-		cm.lock.Lock()
-		defer cm.lock.Unlock()
-	}
+func (cm *chunkManager) CreateChunk(path gfs.Path, addrs []gfs.ServerAddress) (gfs.ChunkHandle, error) {
+    cm.Lock()
+    defer cm.Unlock()
 
-	f, ok := cm.file[path]
-	if !ok {
-		if index == 0 {
-			f = new(fileInfo)
-			cm.file[path] = f
-		} else {
-			return 0, fmt.Errorf("Path %v does not exist", path)
-		}
-	}
-	if int(index) != len(f.index)+1 {
-		return 0, fmt.Errorf("Path %v has %v chunks. Refuse to create Chunk %v", path, len(f.index), index)
-	}
+    handle := cm.numChunkHandle
+    cm.numChunkHandle++
 
-	handle := cm.numChunkHandle
-	cm.numChunkHandle++
-	f.index = append(f.index, handle)
-	cm.chunk[handle] = new(chunkInfo)
-	return handle, nil
+    // update file info
+    fileinfo, ok := cm.file[path];
+    if !ok {
+        fileinfo = new(fileInfo)
+        cm.file[path] = fileinfo
+    }
+    fileinfo.handles = append(fileinfo.handles, handle)
+
+    // update chunk info
+    cm.chunk[handle] = new(chunkInfo)
+
+    return handle, nil
 }

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/abcdabcd987/llgfs/gfs"
 )
 
@@ -27,8 +28,10 @@ type nsTree struct {
 
 func newNamespaceManager() *namespaceManager {
 	nm := &namespaceManager{
-		root: &nsTree{isDir: true},
+        root: &nsTree{isDir: true,
+                      children: make(map[string]*nsTree)},
 	}
+    log.Info("--------------new namespace manager")
 	return nm
 }
 
@@ -39,7 +42,7 @@ func (nm *namespaceManager) lockParents(p string) ([]string, *nsTree, error) {
 	ps := strings.Split(path.Clean(p), "/")
 	cwd := nm.root
 	cwd.RLock()
-	for _, name := range ps[:len(ps)-1] {
+	for _, name := range ps[1:len(ps)-1] {
 		c, ok := cwd.children[name]
 		if !ok {
 			return ps, cwd, fmt.Errorf("path %s not found", p)
@@ -60,7 +63,7 @@ func (nm *namespaceManager) unlockParents(ps []string) {
 		if !ok {
 			return
 		}
-		cwd = c
+        cwd = c
 		cwd.RUnlock()
 	}
 }
@@ -89,7 +92,8 @@ func (nm *namespaceManager) Mkdir(p string) error {
 	if _, ok := cwd.children[p]; ok {
 		return fmt.Errorf("path %s already exists", p)
 	}
-	cwd.children[p] = &nsTree{isDir: true}
+    cwd.children[ps[len(ps)-1]] = &nsTree{isDir:    true,
+                                          children: make(map[string]*nsTree)}
 	return nil
 }
 

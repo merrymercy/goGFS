@@ -1,18 +1,29 @@
 package master
 
 import (
-	"fmt"
-	"math/rand"
+    "fmt"
+	//"math/rand"
 	"sync"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/abcdabcd987/llgfs/gfs"
+	"github.com/abcdabcd987/llgfs/gfs/util"
 )
 
 // chunkServerManager manages chunkservers
 type chunkServerManager struct {
-	lock    sync.RWMutex
-	servers map[gfs.ServerAddress]chunkServerInfo
+	sync.RWMutex
+	servers     map[gfs.ServerAddress]chunkServerInfo
+    addressList []gfs.ServerAddress
+    roll        int
+}
+
+func newChunkServerManager() *chunkServerManager {
+	csm := &chunkServerManager{
+        servers: make(map[gfs.ServerAddress]chunkServerInfo),
+	}
+	return csm
 }
 
 type chunkServerInfo struct {
@@ -21,37 +32,43 @@ type chunkServerInfo struct {
 }
 
 func (csm *chunkServerManager) Heartbeat(addr gfs.ServerAddress) {
-	csm.lock.Lock()
-	defer csm.lock.Unlock()
+    csm.Lock()
+    defer csm.Unlock()
 
-	cs := csm.servers[addr]
-	cs.lastHeartbeat = time.Now()
+    sv, ok := csm.servers[addr]
+    if !ok {
+        log.Info("New chunk server" + addr)
+        csm.servers[addr] = chunkServerInfo{time.Now(), make(map[gfs.ChunkHandle]bool)}
+        csm.addressList = append(csm.addressList, addr)
+    } else {
+        sv.lastHeartbeat = time.Now()
+    }
 }
 
-func (csm *chunkServerManager) AddChunks(addr gfs.ServerAddress, chunks []gfs.ChunkHandle) {
-	csm.lock.Lock()
-	defer csm.lock.Unlock()
+// register chunk to servers
+func (csm *chunkServerManager) AddChunk(addrs []gfs.ServerAddress, handle gfs.ChunkHandle) error {
+    for _, v := range addrs {
+        csm.servers[v].chunks[handle] = true
+    }
 
-	cs := csm.servers[addr]
-	for _, v := range chunks {
-		cs.chunks[v] = true
-	}
+    err := util.CallAll(addrs, "ChunkServer.RPCCreateChunk", gfs.CreateChunkArg{handle})
+    return err
 }
 
-func (csm *chunkServerManager) Sample(k int) ([]gfs.ServerAddress, error) {
-	csm.lock.RLock()
-	defer csm.lock.RUnlock()
+// get servers to store new chunk
+// TODO : allocation strategy and error handle
+func (csm *chunkServerManager) ChooseServers(num int) ([]gfs.ServerAddress, error) {
 
-	if k > len(csm.servers) {
-		return nil, fmt.Errorf("Cannot sample %v from %v servers", k, len(csm.servers))
-	}
-	srvs := make([]gfs.ServerAddress, 0, len(csm.servers))
-	for k := range csm.servers {
-		srvs = append(srvs, k)
-	}
-	for i := 0; i < k; i++ {
-		j := rand.Intn(len(srvs))
-		srvs[i], srvs[j] = srvs[j], srvs[i]
-	}
-	return srvs[:k], nil
+    if num > len(csm.servers) {
+        return nil, fmt.Errorf("no enough servers for %v replicas", num)
+    }
+
+    var ret []gfs.ServerAddress
+    for i := 0; i < num; i++ {
+        addr := csm.addressList[csm.roll]
+        ret = append(ret, addr)
+        csm.roll = (csm.roll + 1) % len(csm.servers)
+    }
+
+    return ret, nil
 }

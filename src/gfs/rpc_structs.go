@@ -7,6 +7,7 @@ import (
 //------ ChunkServer
 
 type PushDataAndForwardArg struct {
+    Handle    ChunkHandle
 	Data      []byte
 	ForwardTo []ServerAddress
 }
@@ -16,55 +17,45 @@ type PushDataAndForwardReply struct {
 }
 
 type ForwardDataArg struct {
+	DataID DataBufferID
 	Data   []byte
-	DataID DataBufferID
 }
 
-type ForwardDataReply struct {
-}
-
-type WriteChunkArg struct {
-	Handle      ChunkHandle
-	Offset      Offset
-	DataID      DataBufferID
-	Secondaries []ServerAddress
-}
-
-type WriteChunkReply struct {
-}
-
-type ApplyWriteChunkArg struct {
-	Handle ChunkHandle
-	Offset Offset
-	DataID DataBufferID
-}
-
-type ApplyWriteChunkReply struct {
-}
+type ForwardDataReply struct {}
 
 type CreateChunkArg struct {
 	Handle ChunkHandle
 }
+type CreateChunkReply struct {}
 
-type CreateChunkReply struct {
+type WriteChunkArg struct {
+	DataID      DataBufferID
+	Offset      Offset
+	Secondaries []ServerAddress
 }
+type WriteChunkReply struct {}
 
 type AppendChunkArg struct {
-	Handle      ChunkHandle
 	DataID      DataBufferID
 	Secondaries []ServerAddress
 }
-
 type AppendChunkReply struct {
-	Offset Offset
+    Offset Offset
 }
+
+type ApplyMutationArg struct {
+    Mtype   MutationType
+    Version ChunkVersion
+	DataID  DataBufferID
+    Offset  Offset
+}
+type ApplyMutationReply struct {}
 
 type PadChunkArg struct {
 	Handle ChunkHandle
 }
+type PadChunkReply struct {}
 
-type PadChunkReply struct {
-}
 
 //------ Master
 
@@ -101,6 +92,23 @@ type GetReplicasArg struct {
 type GetReplicasReply struct {
 	Locations []ServerAddress
 }
+
+type GetFileInfoArg struct {
+    Path Path
+}
+
+type GetFileInfoReply struct {
+    IsDir  bool
+    Length int64
+    Chunks int64
+}
+
+type CreateFileArg struct {
+    Path Path
+}
+
+type CreateFileReply struct {}
+
 
 type GetChunkHandleArg struct {
 	Path  Path

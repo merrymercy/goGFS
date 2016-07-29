@@ -25,7 +25,7 @@ func Call(srv gfs.ServerAddress, rpcname string, args interface{}, reply interfa
 }
 
 // CallAll applies the rpc call to all destinations.
-func CallAll(dst []gfs.ServerAddress, rpcname string, args interface{}) (err error) {
+func CallAll(dst []gfs.ServerAddress, rpcname string, args interface{}) error {
 	ch := make(chan error)
 	for _, d := range dst {
 		go func(addr gfs.ServerAddress) {
@@ -33,11 +33,11 @@ func CallAll(dst []gfs.ServerAddress, rpcname string, args interface{}) (err err
 		}(d)
 	}
 	for _ = range dst {
-		if e := <-ch; e != nil {
-			err = e
+		if err := <-ch; err != nil {
+            return err
 		}
 	}
-	return
+	return nil
 }
 
 // Sample randomly chooses k elements from {0, 1, ..., n-1}.
