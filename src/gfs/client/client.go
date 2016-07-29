@@ -64,22 +64,32 @@ func (c *Client) AppendChunk(handle gfs.ChunkHandle, data []byte) (offset gfs.Of
 
 	var l gfs.GetPrimaryAndSecondariesReply
 	err = util.Call(c.master, "Master.RPCGetPrimaryAndSecondaries", gfs.GetPrimaryAndSecondariesArg{handle}, &l)
-	if err != nil { return }
+	if err != nil {
+        err = gfs.Error{gfs.UnknownError, err.Error()}
+        return
+    }
 
     log.Infof("Client : push data to primary %v", data[:2])
 	var d gfs.PushDataAndForwardReply
 	err = util.Call(l.Primary, "ChunkServer.RPCPushDataAndForward", gfs.PushDataAndForwardArg{handle, data, l.Secondaries}, &d)
-	if err != nil { return }
+	if err != nil {
+        err = gfs.Error{gfs.UnknownError, err.Error()}
+        return
+    }
 
     log.Infof("Client : send append request to primary. data : %v", d.DataID)
 	var a gfs.AppendChunkReply
 	acargs := gfs.AppendChunkArg{d.DataID, l.Secondaries}
 	err = util.Call(l.Primary, "ChunkServer.RPCAppendChunk", acargs, &a)
-
+    if err != nil {
+        log.Fatal(err)
+        err = gfs.Error{gfs.UnknownError, err.Error()}
+    }
     if a.ErrorCode == gfs.AppendExceedChunkSize {
         err = gfs.Error{a.ErrorCode, "append over chunks"}
     }
 	offset = a.Offset
+
 	return
 }
 
