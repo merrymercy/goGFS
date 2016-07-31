@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/abcdabcd987/llgfs/gfs"
-	"github.com/abcdabcd987/llgfs/gfs/util"
+	"gfs"
+	"gfs/util"
 )
 
 // ChunkServer struct
@@ -194,8 +194,7 @@ func (cs *ChunkServer) RPCReadChunk(args gfs.ReadChunkArg, reply *gfs.ReadChunkR
     ck, ok := cs.chunk[handle]
     if !ok { return fmt.Errorf("Cannot find chunk %v", handle) }
 
-
-    // apply to local
+    // read from disk
     var err error
 
     reply.Data = make([]byte, args.Length)
@@ -206,9 +205,6 @@ func (cs *ChunkServer) RPCReadChunk(args gfs.ReadChunkArg, reply *gfs.ReadChunkR
         reply.ErrorCode = gfs.ReadEOF
         return nil
     }
-
-    // extend lease
-    cs.pendingLeaseExtensions.Add(args.Handle)
 
     if err != nil { return err }
     return nil
@@ -338,6 +334,7 @@ func (cs *ChunkServer) RPCApplyMutation(args gfs.ApplyMutationArg, reply *gfs.Ap
     return err
 }
 
+// RPCSendCCopy is called by master, send the whole copy to given address
 func (cs *ChunkServer) RPCSendCopy(args gfs.SendCopyArg, reply *gfs.SendCopyReply) error {
     handle := args.Handle
     ck, ok := cs.chunk[handle]
@@ -352,8 +349,8 @@ func (cs *ChunkServer) RPCSendCopy(args gfs.SendCopyArg, reply *gfs.SendCopyRepl
     if err != nil { return err }
 
     if ck.version != ck.newestVersion {
-        reply.ErrorCode = gfs.NotAvailableForCopy
-        return nil
+        return fmt.Errorf("chunk %v In mutation", handle)
+        //reply.ErrorCode = gfs.NotAvailableForCopy
     }
 
     var r gfs.ApplyCopyReply
@@ -363,6 +360,8 @@ func (cs *ChunkServer) RPCSendCopy(args gfs.SendCopyArg, reply *gfs.SendCopyRepl
     return nil
 }
 
+// RPCSendCCopy is called by another replica
+// rewrite the local version to given copy data
 func (cs *ChunkServer) RPCApplyCopy(args gfs.ApplyCopyArg, reply *gfs.ApplyCopyReply) error {
     handle := args.Handle
     ck, ok := cs.chunk[handle]

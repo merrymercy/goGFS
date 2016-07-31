@@ -6,8 +6,8 @@ import (
 	"time"
 
 	log "github.com/Sirupsen/logrus"
-	"github.com/abcdabcd987/llgfs/gfs"
-	"github.com/abcdabcd987/llgfs/gfs/util"
+	"gfs"
+	"gfs/util"
 )
 
 // chunkManager manges chunks

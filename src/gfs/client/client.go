@@ -7,8 +7,8 @@ import (
     "math/rand"
 
 	log "github.com/Sirupsen/logrus"
-	"github.com/abcdabcd987/llgfs/gfs"
-	"github.com/abcdabcd987/llgfs/gfs/util"
+	"gfs"
+	"gfs/util"
 )
 
 // Client struct is the GFS client-side driver
@@ -25,7 +25,7 @@ func NewClient(master gfs.ServerAddress) *Client {
 
 // Create is a client API, creates a file
 func (c *Client) Create(path gfs.Path) error {
-    var reply struct {}
+    var reply gfs.CreateFileReply
     err := util.Call(c.master, "Master.RPCCreateFile", gfs.CreateFileArg{path}, &reply)
     if err != nil { return err }
     return nil
@@ -33,7 +33,7 @@ func (c *Client) Create(path gfs.Path) error {
 
 // Create is a client API, deletes a file
 func (c *Client) Delete(path gfs.Path) error {
-    var reply struct {}
+    var reply gfs.DeleteFileReply
     err := util.Call(c.master, "Master.RPCDeleteFile", gfs.DeleteFileArg{path}, &reply)
     if err != nil { return err }
     return nil
@@ -41,7 +41,7 @@ func (c *Client) Delete(path gfs.Path) error {
 
 // Mkdir is a client API, makes a directory
 func (c *Client) Mkdir(path gfs.Path) error {
-    var reply struct {}
+    var reply gfs.MkdirReply
     err := util.Call(c.master, "Master.RPCMkdir", gfs.MkdirArg{path}, &reply)
     if err != nil { return err }
     return nil
@@ -49,7 +49,10 @@ func (c *Client) Mkdir(path gfs.Path) error {
 
 // List is a client API, lists all files in specific directory
 func (c *Client) List(path gfs.Path) ([]gfs.PathInfo, error) {
-    return nil, nil
+    var reply gfs.ListReply
+    err := util.Call(c.master, "Master.RPCList", gfs.ListArg{path}, &reply)
+    if err != nil { return nil, err }
+    return reply.Files, nil
 }
 
 // Read is a client API, read file at specific offset
@@ -69,13 +72,13 @@ func (c *Client) Read(path gfs.Path, offset gfs.Offset, data []byte) (n int, err
         index := gfs.ChunkIndex(offset / gfs.MaxChunkSize)
         chunkOffset := offset % gfs.MaxChunkSize
 
-        var h gfs.GetChunkHandleReply
-        err = util.Call(c.master, "Master.RPCGetChunkHandle", gfs.GetChunkHandleArg{path, index}, &h)
-        if err != nil { return -1, err }
+        var handle gfs.ChunkHandle
+        handle, err = c.GetChunkHandle(path, index)
+        if err != nil { return }
 
         var n int
         for { // infinite try
-            n, err = c.ReadChunk(h.Handle, chunkOffset, data[pos:])
+            n, err = c.ReadChunk(handle, chunkOffset, data[pos:])
             if err == nil || err.(gfs.Error).Code == gfs.ReadEOF {
                 break
             }
@@ -112,8 +115,7 @@ func (c *Client) Write(path gfs.Path, offset gfs.Offset, data []byte) error {
         index := gfs.ChunkIndex(offset / gfs.MaxChunkSize)
         chunkOffset := offset % gfs.MaxChunkSize
 
-        var h gfs.GetChunkHandleReply
-        err := util.Call(c.master, "Master.RPCGetChunkHandle", gfs.GetChunkHandleArg{path, index}, &h)
+        handle, err := c.GetChunkHandle(path, index)
         if err != nil { return err }
 
         writeMax := int(gfs.MaxChunkSize - chunkOffset)
@@ -125,7 +127,7 @@ func (c *Client) Write(path gfs.Path, offset gfs.Offset, data []byte) error {
         }
 
         for {
-            err = c.WriteChunk(h.Handle, chunkOffset, data[begin : begin + writeLen])
+            err = c.WriteChunk(handle, chunkOffset, data[begin : begin + writeLen])
             if err == nil { break }
 
             //log.Warning("Write : connection error, try again ", err)
@@ -156,12 +158,12 @@ func (c *Client) Append(path gfs.Path, data []byte) (offset gfs.Offset, err erro
 
     var chunkOffset gfs.Offset
     for {
-        var h gfs.GetChunkHandleReply
-        err = util.Call(c.master, "Master.RPCGetChunkHandle", gfs.GetChunkHandleArg{path, start}, &h)
+        var handle gfs.ChunkHandle
+        handle, err = c.GetChunkHandle(path, start)
         if err != nil { return }
 
         for {
-            chunkOffset, err = c.AppendChunk(h.Handle, data)
+            chunkOffset, err = c.AppendChunk(handle, data)
             if err == nil || err.(gfs.Error).Code == gfs.AppendExceedChunkSize{
                 break
             }
@@ -187,8 +189,7 @@ func (c *Client) Append(path gfs.Path, data []byte) (offset gfs.Offset, err erro
 func (c *Client) GetChunkHandle(path gfs.Path, index gfs.ChunkIndex) (gfs.ChunkHandle, error) {
 	var reply gfs.GetChunkHandleReply
 	err := util.Call(c.master, "Master.RPCGetChunkHandle", gfs.GetChunkHandleArg{path, index}, &reply)
-	if err != nil {
-		return 0, err
+	if err != nil { return 0, err
 	}
 	return reply.Handle, nil
 }
@@ -204,13 +205,10 @@ func (c *Client) ReadChunk(handle gfs.ChunkHandle, offset gfs.Offset, data []byt
         readLen = int(gfs.MaxChunkSize - offset)
     }
 
-	var l gfs.GetPrimaryAndSecondariesReply
-	err := util.Call(c.master, "Master.RPCGetPrimaryAndSecondaries", gfs.GetPrimaryAndSecondariesArg{handle}, &l)
+	var l gfs.GetReplicasReply
+	err := util.Call(c.master, "Master.RPCGetReplicas", gfs.GetReplicasArg{handle}, &l)
 	if err != nil { return 0, gfs.Error{gfs.UnknownError, err.Error()} }
-
-    replicas := append(l.Secondaries, l.Primary)
-    log.Warning(replicas)
-    loc := replicas[rand.Int() % len(replicas)]
+    loc := l.Locations[rand.Int() % len(l.Locations)]
 
 	var r gfs.ReadChunkReply
     r.Data = data
@@ -275,4 +273,3 @@ func (c *Client) AppendChunk(handle gfs.ChunkHandle, data []byte) (offset gfs.Of
     }
 	return a.Offset, nil
 }
-

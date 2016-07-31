@@ -1,13 +1,14 @@
 package master
 
 import (
-    //"fmt"
+    "fmt"
 	log "github.com/Sirupsen/logrus"
-	"github.com/abcdabcd987/llgfs/gfs"
-	"github.com/abcdabcd987/llgfs/gfs/util"
     "time"
 	"net"
 	"net/rpc"
+
+	"gfs"
+	"gfs/util"
 )
 
 // Master Server struct
@@ -116,7 +117,11 @@ func (m *Master) BackgroundActivity() error {
 
             if ck.expire.Before(time.Now()) {
                 err := func() error {
-                undo := func(err error, to gfs.ServerAddress) {
+                var err error
+                var from, to gfs.ServerAddress
+
+                undo := func() {
+                    log.Info(err)
                     if err != nil { // undo
                         m.csm.Lock()
                         m.csm.servers[to].chunks[handles[i]] = false
@@ -129,11 +134,11 @@ func (m *Master) BackgroundActivity() error {
                 ck.Lock()
                 defer ck.Unlock()
 
-                from, to, err := m.csm.ChooseReReplication(handles[i])
+                from, to, err = m.csm.ChooseReReplication(handles[i])
                 if err != nil { return err }
                 log.Warningf("allocate new chunk %v from %v to %v", handles[i], from, to)
 
-                defer undo(err, to)
+                defer undo()
 
                 server[0] = to
                 err = m.csm.AddChunk(server, handles[i])
@@ -147,7 +152,6 @@ func (m *Master) BackgroundActivity() error {
                 return nil
                 } ()
 
-                log.Info(err)
                 _ = err
                 //if err != nil { return err }
             }
@@ -200,32 +204,39 @@ func (m *Master) RPCGetReplicas(args gfs.GetReplicasArg, reply *gfs.GetReplicasR
 
 // RPCCreateFile is called by client to create a new file
 func (m *Master) RPCCreateFile(args gfs.CreateFileArg, replay *gfs.CreateFileReply) error {
-    err := m.nm.Create(string(args.Path))
+    err := m.nm.Create(args.Path)
     return err
 }
 
 // RPCDelete is called by client to delete a file
 func (m *Master) RPCDelete(args gfs.DeleteFileArg, replay *gfs.DeleteFileReply) error {
+    log.Fatal("call to unimplemented RPCDelete")
     return nil
 }
 
 // RPCMkdir is called by client to make a new directory
 func (m *Master) RPCMkdir(args gfs.MkdirArg, replay *gfs.MkdirReply) error {
-    return nil
+    err := m.nm.Mkdir(args.Path)
+    return err
 }
 
 // RPCList is called by client to list all files in specific directory
 func (m *Master) RPCList(args gfs.ListArg, replay *gfs.ListReply) error {
+    log.Fatal("call to unimplemented RPCList")
     return nil
 }
 
 // RPCGetFileInfo is called by client to get file information
 func (m *Master) RPCGetFileInfo(args gfs.GetFileInfoArg, reply *gfs.GetFileInfoReply) error {
-    ps, cwd, err := m.nm.lockParents(string(args.Path))
+    ps, cwd, err := m.nm.lockParents(args.Path)
     defer m.nm.unlockParents(ps)
     if (err != nil) { return err }
 
-    file := cwd.children[ps[len(ps)-1]]
+    file, ok := cwd.children[ps[len(ps)-1]]
+    if !ok { return fmt.Errorf("File %v does not exist", args.Path) }
+    file.RLock()
+    defer file.RUnlock()
+
     reply.IsDir  = file.isDir
     reply.Length = file.length
     reply.Chunks = file.chunks
@@ -235,14 +246,16 @@ func (m *Master) RPCGetFileInfo(args gfs.GetFileInfoArg, reply *gfs.GetFileInfoR
 // RPCGetChunkHandle returns the chunk handle of (path, index).
 // If the requested index is bigger than the number of chunks of this path by one, create one.
 func (m *Master) RPCGetChunkHandle(args gfs.GetChunkHandleArg, reply *gfs.GetChunkHandleReply) error {
-    ps, cwd, err := m.nm.lockParents(string(args.Path))
+    ps, cwd, err := m.nm.lockParents(args.Path)
     defer m.nm.unlockParents(ps)
     if err != nil { return err }
 
     // append new chunks
-    file := cwd.children[ps[len(ps)-1]]
+    file, ok := cwd.children[ps[len(ps)-1]]
+    if !ok { return fmt.Errorf("File %v does not exist", args.Path) }
     file.Lock()
     defer file.Unlock()
+
     if int(args.Index) == int(file.chunks) {
         file.chunks++
 

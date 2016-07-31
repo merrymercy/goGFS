@@ -2,12 +2,12 @@ package master
 
 import (
 	"fmt"
-	"path"
+	//"path"
 	"strings"
 	"sync"
 
 	log "github.com/Sirupsen/logrus"
-	"github.com/abcdabcd987/llgfs/gfs"
+	"gfs"
 )
 
 type namespaceManager struct {
@@ -38,18 +38,18 @@ func newNamespaceManager() *namespaceManager {
 // lockParents place read lock on all parents of p. It returns the list of
 // parents' name, the direct parent nsTree. If a parent does not exist,
 // an error is also returned.
-func (nm *namespaceManager) lockParents(p string) ([]string, *nsTree, error) {
-	ps := strings.Split(path.Clean(p), "/")
+func (nm *namespaceManager) lockParents(p gfs.Path) ([]string, *nsTree, error) {
+    ps := strings.Split(string(p), "/")[1:]
 	cwd := nm.root
-	cwd.RLock()
-	for _, name := range ps[1:len(ps)-1] {
-		c, ok := cwd.children[name]
-		if !ok {
-			return ps, cwd, fmt.Errorf("path %s not found", p)
-		}
-		cwd = c
-		cwd.RLock()
-	}
+    if len(ps) > 1 {
+        cwd.RLock()
+        for _, name := range ps[:len(ps)-1] {
+            c, ok := cwd.children[name]
+            if !ok { return ps, cwd, fmt.Errorf("path %s not found", p) }
+            cwd = c
+            cwd.RLock()
+        }
+    }
 	return ps, cwd, nil
 }
 
@@ -57,71 +57,98 @@ func (nm *namespaceManager) lockParents(p string) ([]string, *nsTree, error) {
 // it just stops and returns. This is the inverse of lockParents.
 func (nm *namespaceManager) unlockParents(ps []string) {
 	cwd := nm.root
-	cwd.RUnlock()
-	for _, name := range ps[:len(ps)-1] {
-		c, ok := cwd.children[name]
-		if !ok {
-			return
-		}
-        cwd = c
-		cwd.RUnlock()
-	}
+    if len(ps) > 1 {
+        cwd.RUnlock()
+        for _, name := range ps[:len(ps)-1] {
+            c, ok := cwd.children[name]
+            if !ok { return }
+            cwd = c
+            cwd.RUnlock()
+        }
+    }
+}
+
+func (nm *namespaceManager) PartionLastName(p gfs.Path) (gfs.Path, string) {
+    for i := len(p) - 1; i >= 0; i-- {
+        if p[i] == '/' {
+            return p[:i], string(p[i + 1:])
+        }
+    }
+    return "", ""
 }
 
 // Create creates an empty file on path p. All parents should exist.
-func (nm *namespaceManager) Create(p string) error {
+func (nm *namespaceManager) Create(p gfs.Path) error {
+    var filename string
+    p, filename = nm.PartionLastName(p)
+
 	ps, cwd, err := nm.lockParents(p)
 	defer nm.unlockParents(ps)
+	if err != nil { return err }
 
-    // lock cwd, ugly, just to fit lockParents and unlockParents
-    cwd.RUnlock()
-    defer cwd.RLock()
+    if (len(ps) > 0) {
+        var ok bool
+        cwd, ok = cwd.children[ps[len(ps)-1]]
+        if !ok {
+            return fmt.Errorf("path %s does not exist", ps[len(ps)-1])
+        }
+    }
     cwd.Lock()
     defer cwd.Unlock()
 
-	if err != nil {
-		return err
-	}
-	if _, ok := cwd.children[p]; ok {
+	if _, ok := cwd.children[filename]; ok {
 		return fmt.Errorf("path %s already exists", p)
 	}
-	cwd.children[ps[len(ps)-1]] = new(nsTree)
+	cwd.children[filename] = new(nsTree)
 	return nil
 }
 
+// Create creates an empty file on path p. All parents should exist.
+func (nm *namespaceManager) Delete(p gfs.Path) error {
+    return nil
+}
+
 // Mkdir creates a directory on path p. All parents should exist.
-func (nm *namespaceManager) Mkdir(p string) error {
+func (nm *namespaceManager) Mkdir(p gfs.Path) error {
+    var filename string
+    p, filename = nm.PartionLastName(p)
+
 	ps, cwd, err := nm.lockParents(p)
 	defer nm.unlockParents(ps)
-	if err != nil {
-		return err
-	}
-	if _, ok := cwd.children[p]; ok {
-		return fmt.Errorf("path %s already exists", p)
-	}
+	if err != nil { return err }
 
-    // lock cwd, ugly, just to fit lockParents and unlockParents
-    cwd.RUnlock()
-    defer cwd.RLock()
+    if (len(ps) > 0) {
+        var ok bool
+        cwd, ok = cwd.children[ps[len(ps)-1]]
+        if !ok {
+            return fmt.Errorf("path %s does not exist", ps[len(ps)-1])
+        }
+    }
+
     cwd.Lock()
     defer cwd.Unlock()
 
-    cwd.children[ps[len(ps)-1]] = &nsTree{isDir:    true,
-                                          children: make(map[string]*nsTree)}
+	if _, ok := cwd.children[filename]; ok {
+		return fmt.Errorf("path %s already exists", p)
+	}
+    cwd.children[filename] = &nsTree{isDir:    true,
+                                     children: make(map[string]*nsTree)}
 	return nil
 }
 
 // List returns information of all files and directories inside p.
-func (nm *namespaceManager) List(p string) ([]gfs.PathInfo, error) {
+func (nm *namespaceManager) List(p gfs.Path) ([]gfs.PathInfo, error) {
 	ps, cwd, err := nm.lockParents(p)
 	defer nm.unlockParents(ps)
-	if err != nil {
-		return nil, err
-	}
-	cwd, ok := cwd.children[p]
-	if !ok {
-		return nil, fmt.Errorf("path %s does not exist", p)
-	}
+	if err != nil { return nil, err }
+
+    name := ps[len(ps)-1]
+	cwd, ok := cwd.children[name]
+	if !ok { return nil, fmt.Errorf("path %s does not exist", p) }
+
+    cwd.RLock()
+    defer cwd.RUnlock()
+
 	if !cwd.isDir {
 		return nil, fmt.Errorf("path %s is a file, not directory", p)
 	}

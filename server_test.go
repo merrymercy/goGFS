@@ -1,11 +1,6 @@
 package main
 
 import (
-	"github.com/abcdabcd987/llgfs/gfs"
-	"github.com/abcdabcd987/llgfs/gfs/chunkserver"
-	"github.com/abcdabcd987/llgfs/gfs/client"
-	"github.com/abcdabcd987/llgfs/gfs/master"
-
     "fmt"
     "io"
 	"io/ioutil"
@@ -14,6 +9,11 @@ import (
 	"path"
 	"testing"
     "time"
+
+	"gfs"
+	"gfs/chunkserver"
+	"gfs/client"
+	"gfs/master"
 )
 
 var (
@@ -39,8 +39,8 @@ func TestRPCGetChunkHandle(t *testing.T) {
 }
 
 const (
-    testfile1 = gfs.Path("/first.txt")
-    testfile2 = gfs.Path("/second.txt")
+    testfile1 = "/first.txt"
+    testfile2 = "/second.txt"
     n         = 100
 )
 
@@ -53,10 +53,32 @@ func PrintFinalFile() {
     cs5.PrintSelf()
 }
 
-func TestCreateFile(t *testing.T) {
-    err := c1.Create(gfs.Path("/first.txt"))
+func TestNamespace(t *testing.T) {
+    var err error
+    err = c1.Create("/test1.txt")
     if err != nil { t.Error(err) }
-    time.Sleep(25 * time.Second)
+    err = c2.Create("/test2.txt")
+    if err != nil { t.Error(err) }
+
+    err = c1.Mkdir("/level1_1")
+    if err != nil { t.Error(err) }
+    err = c2.Mkdir("/level1_2")
+    if err != nil { t.Error(err) }
+
+    err = c1.Mkdir("/level1_1/level2_1")
+    if err != nil { t.Error(err) }
+    err = c2.Mkdir("/level1_2/level2_2")
+    if err != nil { t.Error(err) }
+
+    err = c1.Create("/level1_1/first.txt")
+    if err != nil { t.Error(err) }
+    err = c2.Create("/level1_2/second.txt")
+    if err != nil { t.Error(err) }
+
+    c1.Append("/level1_1/first.txt", []byte("Hello 1"))
+    c1.Append("/level1_2/second.txt", []byte("Hello 2"))
+
+    PrintFinalFile()
 }
 
 func TestReReplication(t *testing.T) {
@@ -72,10 +94,7 @@ func TestReReplication(t *testing.T) {
 }
 
 func TestAppendFile(t *testing.T) {
-    err := c1.Create(testfile2)
-    if err != nil { t.Error(err) }
-    err = c2.Create(testfile1)
-    if err != nil { t.Error(err) }
+    var err error
     ch := make(chan error)
 
     for i := 0; i < n; i++ {
@@ -100,16 +119,10 @@ func TestAppendFile(t *testing.T) {
         }
     }
 
-    time.Sleep(5000 * time.Millisecond)
     PrintFinalFile()
 }
 
 func TestWriteFile(t *testing.T) {
-    err := c1.Create(testfile2)
-    if err != nil { t.Error(err) }
-    err = c2.Create(testfile1)
-    if err != nil { t.Error(err) }
-
     ch := make(chan error, n)
     for i := 0; i < n; i++ {
         go func(x int) {
@@ -135,37 +148,31 @@ func TestWriteFile(t *testing.T) {
 }
 
 func TestReadFile(t * testing.T) {
-    err := c1.Create(testfile2)
-    if err != nil { t.Error(err) }
-    err = c2.Create(testfile1)
-    if err != nil { t.Error(err) }
-
     // write file
     c1.Write(testfile1, gfs.Offset(0), []byte("1.2.3.4.5.6.7.8.9.10.11.12.13.14.15.16.17.18.19.20.21.22"))
     c2.Write(testfile2, gfs.Offset(0), []byte("A.B.C.D.E.F.G.H.I.J.K.L.M.N.O.P.Q.R.S.T.U.V.W.X.Y.Z"))
-
-    cs2.Shutdown()
-    cs3.Shutdown()
 
     // read file
     ch := make(chan error, n)
     for i := 0; i < n; i++ {
         go func(x int) {
             buf := make([]byte, 64)
-            n, err := c1.Read(testfile1, gfs.Offset(x * 2), buf)
-            log.Infof("read %v at %v : %v (ret : %v, %v)", testfile1, x * 2, string(buf), n, err)
+            n, err := c1.Read(testfile1, gfs.Offset(x * 2 % 10), buf)
+            log.Infof("read %v at %v : %v (ret : %v, %v)", testfile1, x * 2 % 10, string(buf), n, err)
             ch <- err
         }(i)
     }
     for i := 0; i < n; i++ {
         go func(x int) {
             buf := make([]byte, 64)
-            n, err := c2.Read(testfile2, gfs.Offset(x * 2), buf)
-            log.Infof("read %v at %v : %v (ret: %v, %v)", testfile2, x * 2, string(buf), n, err)
+            n, err := c2.Read(testfile2, gfs.Offset(x * 2 % 10), buf)
+            log.Infof("read %v at %v : %v (ret: %v, %v)", testfile2, x * 2 % 10, string(buf), n, err)
             ch <- err
         }(i)
     }
 
+    cs2.Shutdown()
+    cs3.Shutdown()
 
     for i := 0; i < 2 * n; i++ {
         if err := <-ch; err != nil && err != io.EOF {
@@ -177,10 +184,7 @@ func TestReadFile(t * testing.T) {
 }
 
 func TestMixFile(t *testing.T) {
-    err := c1.Create(testfile2)
-    if err != nil { t.Error(err) }
-    err = c2.Create(testfile1)
-    if err != nil { t.Error(err) }
+    var err error
     ch := make(chan error)
 
     for i := 0; i < n; i++ {
@@ -228,6 +232,13 @@ func TestMain(m *testing.M) {
 	c2 = client.NewClient(":7777")
 
     time.Sleep(300 * time.Millisecond)
+
+    // create file
+    err = c1.Create(testfile2)
+    if err != nil { log.Fatal(err) }
+    err = c2.Create(testfile1)
+    if err != nil { log.Fatal(err) }
+
     ret := m.Run()
 
     // shutdown

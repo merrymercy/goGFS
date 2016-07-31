@@ -160,7 +160,9 @@ type MkdirReply struct {}
 type ListArg struct {
     Path Path
 }
-type ListReply struct {}
+type ListReply struct {
+    Files []PathInfo
+}
 
 type GetChunkHandleArg struct {
 	Path  Path

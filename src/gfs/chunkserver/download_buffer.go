@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/abcdabcd987/llgfs/gfs"
+	"gfs"
 )
 
 type downloadItem struct {
