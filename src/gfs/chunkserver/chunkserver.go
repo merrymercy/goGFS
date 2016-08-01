@@ -72,8 +72,8 @@ func NewAndServe(addr, masterAddr gfs.ServerAddress, serverRoot string) *ChunkSe
 	cs.l = l
 
     // Mkdir
-    err := os.Mkdir(serverRoot, 0744)
-    if err != nil { log.Fatal("mkdir", err) }
+    //err := os.Mkdir(serverRoot, 0744)
+    //if err != nil { log.Fatal("mkdir", err) }
 
 	shutdown := make(chan struct{})
 	// RPC Handler
@@ -498,7 +498,7 @@ func getContents(filename string) (string, error) {
     return string(result), nil // f will be closed if we return here.
 }
 
-func (cs *ChunkServer) PrintSelf() error {
+func (cs *ChunkServer) printSelf() error {
     log.Info("============ ", cs.address, " ============")
     if cs.dead {
         log.Warning("DEAD")

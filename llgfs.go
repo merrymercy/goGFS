@@ -16,7 +16,7 @@ func runMaster() {
 		return
 	}
 	addr := gfs.ServerAddress(os.Args[2])
-	master.NewAndServe(addr)
+	master.NewAndServe(addr, os.Args[3])
 
 	ch := make(chan bool)
 	<-ch
@@ -38,7 +38,7 @@ func runChunkServer() {
 
 func printUsage() {
 	fmt.Println("Usage:")
-	fmt.Println("  gfs master <addr>")
+	fmt.Println("  gfs master <addr> <root path>")
 	fmt.Println("  gfs chunkserver <addr> <root path> <master addr>")
 	fmt.Println()
 }

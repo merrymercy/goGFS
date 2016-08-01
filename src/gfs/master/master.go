@@ -14,6 +14,7 @@ import (
 // Master Server struct
 type Master struct {
 	address       gfs.ServerAddress // master server address
+    serverRoot    string
 	l             net.Listener
 	shutdown      chan struct {}
 
@@ -23,9 +24,10 @@ type Master struct {
 }
 
 // NewAndServe starts a master and returns the pointer to it.
-func NewAndServe(address gfs.ServerAddress) *Master {
+func NewAndServe(address gfs.ServerAddress, serverRoot string) *Master {
 	m := &Master{
 		address:       address,
+        serverRoot:    serverRoot,
         shutdown:      make(chan struct {}),
 	}
 
@@ -68,7 +70,7 @@ func NewAndServe(address gfs.ServerAddress) *Master {
         for {
             <-ticker
 
-            err := m.BackgroundActivity()
+            err := m.backgroundActivity()
             if err != nil {
                 log.Fatal("Background error ", err)
             }
@@ -97,7 +99,7 @@ func (m *Master) Shutdown() {
 
 // BackgroundActivity does all the background activities
 // server disconnection handle, garbage collection, stale replica detection, etc
-func (m *Master) BackgroundActivity() error {
+func (m *Master) backgroundActivity() error {
     // detect dead servers
     addrs := m.csm.DetectDeadServers()
     for _, v := range addrs {
