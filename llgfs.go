@@ -3,9 +3,10 @@ package main
 import (
 	"fmt"
 	log "github.com/Sirupsen/logrus"
-	"github.com/abcdabcd987/llgfs/gfs"
-	"github.com/abcdabcd987/llgfs/gfs/chunkserver"
-	"github.com/abcdabcd987/llgfs/gfs/master"
+
+	"gfs"
+	"gfs/chunkserver"
+	"gfs/master"
 	"os"
 )
 
