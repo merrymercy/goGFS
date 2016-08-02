@@ -5,33 +5,30 @@ import (
 )
 
 //------ ChunkServer
-type PushDataAndForwardArg struct {
-    Handle    ChunkHandle
-	Data      []byte
-	ForwardTo []ServerAddress
-}
-type PushDataAndForwardReply struct {
-	DataID DataBufferID
-    ErrorCode ErrorCode
-}
-
+//type PushDataAndForwardArg struct {
+//    Handle    ChunkHandle
+//	Data      []byte
+//}
+//type PushDataAndForwardReply struct {
+//	DataID DataBufferID
+//    ErrorCode ErrorCode
+//}
 
 type ForwardDataArg struct {
-	DataID DataBufferID
-	Data   []byte
+	DataID     DataBufferID
+	Data       []byte
+	ChainOrder []ServerAddress
 }
 type ForwardDataReply struct {
-    ErrorCode ErrorCode
+	ErrorCode ErrorCode
 }
-
 
 type CreateChunkArg struct {
 	Handle ChunkHandle
 }
 type CreateChunkReply struct {
-    ErrorCode ErrorCode
+	ErrorCode ErrorCode
 }
-
 
 type WriteChunkArg struct {
 	DataID      DataBufferID
@@ -39,66 +36,65 @@ type WriteChunkArg struct {
 	Secondaries []ServerAddress
 }
 type WriteChunkReply struct {
-    ErrorCode ErrorCode
+	ErrorCode ErrorCode
 }
-
 
 type AppendChunkArg struct {
 	DataID      DataBufferID
 	Secondaries []ServerAddress
 }
 type AppendChunkReply struct {
-    Offset Offset
-    ErrorCode ErrorCode
+	Offset    Offset
+	ErrorCode ErrorCode
 }
-
 
 type ApplyMutationArg struct {
-    Mtype   MutationType
-    Version ChunkVersion
+	Mtype   MutationType
+	Version ChunkVersion
 	DataID  DataBufferID
-    Offset  Offset
+	Offset  Offset
 }
 type ApplyMutationReply struct {
-    ErrorCode ErrorCode
+	ErrorCode ErrorCode
 }
-
 
 type PadChunkArg struct {
 	Handle ChunkHandle
 }
 type PadChunkReply struct {
-    ErrorCode ErrorCode
+	ErrorCode ErrorCode
 }
-
 
 type ReadChunkArg struct {
-    Handle ChunkHandle
-    Offset Offset
-    Length int
+	Handle ChunkHandle
+	Offset Offset
+	Length int
 }
 type ReadChunkReply struct {
-    Data   []byte
-    Length int
-    ErrorCode ErrorCode
+	Data      []byte
+	Length    int
+	ErrorCode ErrorCode
 }
 
 type SendCopyArg struct {
 	Handle  ChunkHandle
-    Address ServerAddress
+	Address ServerAddress
 }
 type SendCopyReply struct {
-    ErrorCode ErrorCode
+	ErrorCode ErrorCode
 }
 
 type ApplyCopyArg struct {
-    Handle  ChunkHandle
-    Data    []byte
-    Version ChunkVersion
+	Handle  ChunkHandle
+	Data    []byte
+	Version ChunkVersion
 }
 type ApplyCopyReply struct {
-    ErrorCode ErrorCode
+	ErrorCode ErrorCode
 }
+
+// no use argument
+type Nouse struct{}
 
 //------ Master
 
@@ -107,7 +103,6 @@ type HeartbeatArg struct {
 	LeaseExtensions []ChunkHandle // leases to be extended
 }
 type HeartbeatReply struct{}
-
 
 type GetPrimaryAndSecondariesArg struct {
 	Handle ChunkHandle
@@ -134,34 +129,34 @@ type GetReplicasReply struct {
 }
 
 type GetFileInfoArg struct {
-    Path Path
+	Path Path
 }
 type GetFileInfoReply struct {
-    IsDir  bool
-    Length int64
-    Chunks int64
+	IsDir  bool
+	Length int64
+	Chunks int64
 }
 
 type CreateFileArg struct {
-    Path Path
+	Path Path
 }
-type CreateFileReply struct {}
+type CreateFileReply struct{}
 
 type DeleteFileArg struct {
-    Path Path
+	Path Path
 }
-type DeleteFileReply struct {}
+type DeleteFileReply struct{}
 
 type MkdirArg struct {
-    Path Path
+	Path Path
 }
-type MkdirReply struct {}
+type MkdirReply struct{}
 
 type ListArg struct {
-    Path Path
+	Path Path
 }
 type ListReply struct {
-    Files []PathInfo
+	Files []PathInfo
 }
 
 type GetChunkHandleArg struct {
