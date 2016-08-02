@@ -45,7 +45,7 @@ func newChunkManager() *chunkManager {
         chunk: make(map[gfs.ChunkHandle]*chunkInfo),
         file : make(map[gfs.Path]*fileInfo),
 	}
-    log.Info("---------new chunk manager")
+    log.Info("-----------new chunk manager")
 	return cm
 }
 

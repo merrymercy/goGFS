@@ -31,7 +31,7 @@ func newNamespaceManager() *namespaceManager {
         root: &nsTree{isDir: true,
                       children: make(map[string]*nsTree)},
 	}
-    log.Info("--------------new namespace manager")
+    log.Info("-----------new namespace manager")
 	return nm
 }
 

@@ -40,7 +40,7 @@ func NewAndServe(address gfs.ServerAddress, serverRoot string) *Master {
 	}
 	m.l = l
 
-    m.InitMetadata()
+    m.initMetadata()
 
 	// RPC Handler
 	go func() {
@@ -83,7 +83,7 @@ func NewAndServe(address gfs.ServerAddress, serverRoot string) *Master {
 }
 
 // InitMetadata initiates meta data
-func (m *Master) InitMetadata() {
+func (m *Master) initMetadata() {
     // new or read from old
     m.nm =  newNamespaceManager()
     m.cm  = newChunkManager()
@@ -103,7 +103,7 @@ func (m *Master) backgroundActivity() error {
     // detect dead servers
     addrs := m.csm.DetectDeadServers()
     for _, v := range addrs {
-        log.Infof("remove %v", v)
+        log.Warningf("remove server %v", v)
         handles, err := m.csm.RemoveServer(v)
         if err != nil { return err }
         m.cm.RemoveChunks(handles, v)
@@ -123,14 +123,13 @@ func (m *Master) backgroundActivity() error {
                 var from, to gfs.ServerAddress
 
                 undo := func() {
-                    log.Info(err)
+                    log.Warning(err)
                     if err != nil { // undo
                         m.csm.Lock()
                         m.csm.servers[to].chunks[handles[i]] = false
                         m.csm.Unlock()
                     }
                 }
-
 
                 // lock chunk, so master will not grant lease in copy time
                 ck.Lock()
@@ -155,7 +154,6 @@ func (m *Master) backgroundActivity() error {
                 } ()
 
                 _ = err
-                //if err != nil { return err }
             }
         }
     }
@@ -269,7 +267,7 @@ func (m *Master) RPCGetChunkHandle(args gfs.GetChunkHandleArg, reply *gfs.GetChu
 
         err = m.csm.AddChunk(addrs, reply.Handle)
         if err != nil {
-            log.Warning("An ignored error in rpcgetchunkhandle", err)
+            log.Warning("[ignored] An ignored error in RPCGetChunkHandle ", err)
             return nil   // delay the error handle to client
         }
     } else {
