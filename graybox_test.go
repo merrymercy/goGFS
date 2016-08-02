@@ -25,7 +25,7 @@ var (
 )
 
 const (
-	N = 10
+	N = 100
 )
 
 func errorAll(ch chan error, n int, t *testing.T) {
@@ -394,7 +394,8 @@ func TestMain(tm *testing.M) {
 		log.Fatal("cannot create temporary directory: ", err)
 	}
 
-    log.SetLevel(log.WarnLevel)
+    //log.SetLevel(log.WarnLevel)
+    log.SetLevel(log.FatalLevel)
 
 	os.Mkdir(path.Join(root, "m"), 0755)
 	os.Mkdir(path.Join(root, "cs1"), 0755)

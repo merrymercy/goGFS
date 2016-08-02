@@ -14,13 +14,15 @@ import (
 
 // Client struct is the GFS client-side driver
 type Client struct {
-	master gfs.ServerAddress
+	master   gfs.ServerAddress
+    leaseBuf *leaseBuffer
 }
 
 // NewClient returns a new gfs client.
 func NewClient(master gfs.ServerAddress) *Client {
 	return &Client{
-		master: master,
+		master:   master,
+        leaseBuf: newLeaseBuffer(master, gfs.LeaseBufferTick),
 	}
 }
 
@@ -79,7 +81,7 @@ func (c *Client) Read(path gfs.Path, offset gfs.Offset, data []byte) (n int, err
 	}
 
 	pos := 0
-	for {
+	for pos < len(data) {
 		index := gfs.ChunkIndex(offset / gfs.MaxChunkSize)
 		chunkOffset := offset % gfs.MaxChunkSize
 
@@ -101,10 +103,6 @@ func (c *Client) Read(path gfs.Path, offset gfs.Offset, data []byte) (n int, err
 		offset += gfs.Offset(n)
 		pos += n
 		if err != nil {
-			break
-		}
-
-		if pos == len(data) {
 			break
 		}
 	}
@@ -267,8 +265,8 @@ func (c *Client) WriteChunk(handle gfs.ChunkHandle, offset gfs.Offset, data []by
 	if len(data)+int(offset) > gfs.MaxChunkSize {
 		return fmt.Errorf("len(data)+offset = %v > max chunk size %v", len(data)+int(offset), gfs.MaxChunkSize)
 	}
-	var l gfs.GetPrimaryAndSecondariesReply
-	err := util.Call(c.master, "Master.RPCGetPrimaryAndSecondaries", gfs.GetPrimaryAndSecondariesArg{handle}, &l)
+
+    l, err := c.leaseBuf.Get(handle)
 	if err != nil {
 		return err
 	}
@@ -295,16 +293,15 @@ func (c *Client) AppendChunk(handle gfs.ChunkHandle, data []byte) (offset gfs.Of
 		return 0, gfs.Error{gfs.UnknownError, fmt.Sprintf("len(data) = %v > max append size %v", len(data), gfs.MaxAppendSize)}
 	}
 
-	var l gfs.GetPrimaryAndSecondariesReply
-	err = util.Call(c.master, "Master.RPCGetPrimaryAndSecondaries", gfs.GetPrimaryAndSecondariesArg{handle}, &l)
+    l, err := c.leaseBuf.Get(handle)
 	if err != nil {
-		return -1, gfs.Error{gfs.UnknownError, err.Error()}
-	}
+		return -1, err
+    }
 
-	//log.Infof("Client : push data to primary %v", data[:2])
     dataID := chunkserver.NewDataID(handle)
 	chain := append(l.Secondaries, l.Primary)
 
+	//log.Infof("Client : push data %v to primary %v", dataID, l.Primary)
 	var d gfs.ForwardDataReply
     err = util.Call(chain[0], "ChunkServer.RPCForwardData", gfs.ForwardDataArg{dataID, data, chain[1:]}, &d)
 	if err != nil {

@@ -34,12 +34,6 @@ type fileInfo struct {
 	handles []gfs.ChunkHandle
 }
 
-type lease struct {
-	primary     gfs.ServerAddress
-	expire      time.Time
-	secondaries []gfs.ServerAddress
-}
-
 func newChunkManager() *chunkManager {
 	cm := &chunkManager{
         chunk: make(map[gfs.ChunkHandle]*chunkInfo),
@@ -94,11 +88,11 @@ func (cm *chunkManager) GetChunk(path gfs.Path, index gfs.ChunkIndex) (gfs.Chunk
 // GetLeaseHolder returns the chunkserver that hold the lease of a chunk
 // (i.e. primary) and expire time of the lease. If no one has a lease,
 // grants one to a replica it chooses.
-func (cm *chunkManager) GetLeaseHolder(handle gfs.ChunkHandle) (*lease, error) {
+func (cm *chunkManager) GetLeaseHolder(handle gfs.ChunkHandle) (*gfs.Lease, error) {
     cm.RLock()
     defer cm.RUnlock()
 
-    ret := &lease{}
+    ret := &gfs.Lease{}
     chunkinfo, ok := cm.chunk[handle]
     if !ok { return nil, fmt.Errorf("invalid chunk handle %v", handle) }
 
@@ -110,11 +104,11 @@ func (cm *chunkManager) GetLeaseHolder(handle gfs.ChunkHandle) (*lease, error) {
         chunkinfo.expire = time.Now().Add(gfs.LeaseExpire)
     }
 
-    ret.primary = chunkinfo.primary
-    ret.expire = chunkinfo.expire
+    ret.Primary = chunkinfo.primary
+    ret.Expire = chunkinfo.expire
     for _, v := range chunkinfo.location.GetAll() {
         if vv := v.(gfs.ServerAddress); vv != chunkinfo.primary {
-            ret.secondaries = append(ret.secondaries, vv)
+            ret.Secondaries = append(ret.Secondaries, vv)
         }
     }
     return ret, nil

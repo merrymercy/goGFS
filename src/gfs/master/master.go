@@ -176,9 +176,9 @@ func (m *Master) RPCGetPrimaryAndSecondaries(args gfs.GetPrimaryAndSecondariesAr
     if err != nil {
         return err
     }
-    reply.Primary = lease.primary
-    reply.Expire  = lease.expire
-    reply.Secondaries = lease.secondaries
+    reply.Primary = lease.Primary
+    reply.Expire  = lease.Expire
+    reply.Secondaries = lease.Secondaries
     return nil
 }
 

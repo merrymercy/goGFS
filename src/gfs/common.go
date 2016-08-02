@@ -14,6 +14,12 @@ type DataBufferID struct {
 	TimeStamp int
 }
 
+type Lease struct {
+	Primary     ServerAddress
+	Expire      time.Time
+	Secondaries []ServerAddress
+}
+
 type PathInfo struct {
 	Name string
 
@@ -69,4 +75,5 @@ const (
 
 	DownloadBufferExpire = 2 * time.Minute
 	DownloadBufferTick   = 10 * time.Second
+    LeaseBufferTick      = 200 * time.Millisecond
 )
