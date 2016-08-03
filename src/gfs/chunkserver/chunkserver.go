@@ -4,11 +4,11 @@ import (
 	"fmt"
 	log "github.com/Sirupsen/logrus"
 	//"math/rand"
+	"encoding/gob"
+	"io"
 	"net"
 	"net/rpc"
 	"os"
-	//"os/exec"
-	"io"
 	"path"
 	"sync"
 	"time"
@@ -42,10 +42,16 @@ type Mutation struct {
 type chunkInfo struct {
 	sync.RWMutex
 	length        gfs.Offset
-	version       gfs.ChunkVersion               // version number of the chunk in disk
+	version       gfs.ChunkVersion // version number of the chunk in disk
+	checksum      gfs.Checksum
 	newestVersion gfs.ChunkVersion               // allocated newest version number
 	mutations     map[gfs.ChunkVersion]*Mutation // mutation buffer
 }
+
+const (
+	MetaFileName = "gfs-server.meta"
+	FilePerm     = 0755
+)
 
 // return the next version for chunk
 func (ck *chunkInfo) nextVersion() gfs.ChunkVersion {
@@ -73,9 +79,13 @@ func NewAndServe(addr, masterAddr gfs.ServerAddress, serverRoot string) *ChunkSe
 	}
 	cs.l = l
 
-	os.Remove(fmt.Sprintf("%s/cs*/chunk*.chk", serverRoot))
+	//os.Remove(fmt.Sprintf("%s/cs*/chunk*.chk", serverRoot))
+    err := cs.loadMeta()
+    if err != nil {
+        log.Warning("Error in load metadata: ", err)
+    }
 	// Mkdir
-	//err := os.Mkdir(serverRoot, 0744)
+	//err := os.Mkdir(serverRoot, FilePerm)
 	//if err != nil { log.Fatal("mkdir", err) }
 
 	shutdown := make(chan struct{})
@@ -136,6 +146,81 @@ func NewAndServe(addr, masterAddr gfs.ServerAddress, serverRoot string) *ChunkSe
 	return cs
 }
 
+type ReportSelfReply struct {
+	Handle   gfs.ChunkHandle
+	Version  gfs.ChunkVersion
+	Length   int64
+	Checksum gfs.Checksum
+}
+
+func (cs *ChunkServer) RPCReportSelf(args gfs.ReportSelfArg, reply *gfs.ReportSelfReply) error {
+	for handle, ck := range cs.chunk {
+		reply.Chunks = append(reply.Chunks, gfs.PersistentChunkInfo{
+			Handle:   handle,
+			Version:  ck.version,
+			Length:   ck.length,
+			Checksum: ck.checksum,
+		})
+	}
+
+	return nil
+}
+
+func (cs *ChunkServer) loadMeta() error {
+	filename := path.Join(cs.serverRoot, MetaFileName)
+	file, err := os.OpenFile(filename, os.O_RDONLY, FilePerm)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+
+	var metas []gfs.PersistentChunkInfo
+	dec := gob.NewDecoder(file)
+	err = dec.Decode(&metas)
+	if err != nil {
+		return err
+	}
+
+    log.Infof("Server %v : load metadata len: %v", cs.address, len(metas))
+
+	// TODO : add check
+	// add chunks to server
+	for _, ck := range metas {
+        log.Infof("Server %v restore %v version: %v length: %v", cs.address, ck.Handle, ck.Version, ck.Length)
+		cs.chunk[ck.Handle] = &chunkInfo{
+			length:    ck.Length,
+			version:   ck.Version,
+			mutations: make(map[gfs.ChunkVersion]*Mutation),
+		}
+	}
+
+	return nil
+}
+
+//
+func (cs *ChunkServer) storeMeta() error {
+	filename := path.Join(cs.serverRoot, MetaFileName)
+	file, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE, FilePerm)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	var metas []gfs.PersistentChunkInfo
+	for handle, ck := range cs.chunk {
+		metas = append(metas, gfs.PersistentChunkInfo{
+			Handle: handle, Length: ck.length, Version: ck.version,
+		})
+	}
+
+    log.Infof("Server %v : store metadata len: %v", cs.address, len(metas))
+	enc := gob.NewEncoder(file)
+	err = enc.Encode(metas)
+
+	return err
+}
+
 // Shutdown shuts the chunkserver down
 //func (cs *ChunkServer) Shutdown(args gfs.Nouse, reply *gfs.Nouse) error {
 func (cs *ChunkServer) Shutdown() {
@@ -145,6 +230,10 @@ func (cs *ChunkServer) Shutdown() {
 		close(cs.shutdown)
 		cs.l.Close()
 	}
+    err := cs.storeMeta()
+    if err != nil {
+        log.Warning("error in store metadeta: ", err)
+    }
 }
 
 // RPCPushDataAndForward is called by client.
@@ -202,7 +291,7 @@ func (cs *ChunkServer) RPCCreateChunk(args gfs.CreateChunkArg, reply *gfs.Create
 		mutations: make(map[gfs.ChunkVersion]*Mutation),
 	}
 	filename := path.Join(cs.serverRoot, fmt.Sprintf("chunk%v.chk", args.Handle))
-	_, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE, 0744)
+	_, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE, 0644)
 	if err != nil {
 		return err
 	}
@@ -454,7 +543,7 @@ func (cs *ChunkServer) writeChunk(handle gfs.ChunkHandle, version gfs.ChunkVersi
 
 	//log.Infof("Server %v : write to chunk %v version %v", cs.address, handle, version)
 	filename := path.Join(cs.serverRoot, fmt.Sprintf("chunk%v.chk", handle))
-	file, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE, 0744)
+	file, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE, FilePerm)
 	if err != nil {
 		return err
 	}

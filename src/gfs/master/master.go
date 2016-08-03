@@ -1,11 +1,11 @@
 package master
 
 import (
-    "fmt"
+	"fmt"
 	log "github.com/Sirupsen/logrus"
-    "time"
 	"net"
 	"net/rpc"
+	"time"
 
 	"gfs"
 	"gfs/util"
@@ -13,12 +13,12 @@ import (
 
 // Master Server struct
 type Master struct {
-	address       gfs.ServerAddress // master server address
-    serverRoot    string
-	l             net.Listener
-	shutdown      chan struct {}
+	address    gfs.ServerAddress // master server address
+	serverRoot string
+	l          net.Listener
+	shutdown   chan struct{}
 
-    nm  *namespaceManager
+	nm  *namespaceManager
 	cm  *chunkManager
 	csm *chunkServerManager
 }
@@ -26,9 +26,9 @@ type Master struct {
 // NewAndServe starts a master and returns the pointer to it.
 func NewAndServe(address gfs.ServerAddress, serverRoot string) *Master {
 	m := &Master{
-		address:       address,
-        serverRoot:    serverRoot,
-        shutdown:      make(chan struct {}),
+		address:    address,
+		serverRoot: serverRoot,
+		shutdown:   make(chan struct{}),
 	}
 
 	rpcs := rpc.NewServer()
@@ -40,7 +40,7 @@ func NewAndServe(address gfs.ServerAddress, serverRoot string) *Master {
 	}
 	m.l = l
 
-    m.initMetadata()
+	m.initMetadata()
 
 	// RPC Handler
 	go func() {
@@ -66,15 +66,15 @@ func NewAndServe(address gfs.ServerAddress, serverRoot string) *Master {
 
 	// Background Task
 	go func() {
-        ticker := time.Tick(gfs.BackgroundInterval)
-        for {
-            <-ticker
+		ticker := time.Tick(gfs.BackgroundInterval)
+		for {
+			<-ticker
 
-            err := m.backgroundActivity()
-            if err != nil {
-                log.Fatal("Background error ", err)
-            }
-        }
+			err := m.backgroundActivity()
+			if err != nil {
+				log.Fatal("Background error ", err)
+			}
+		}
 	}()
 
 	log.Infof("Master is running now. addr = %v", address)
@@ -84,195 +84,218 @@ func NewAndServe(address gfs.ServerAddress, serverRoot string) *Master {
 
 // InitMetadata initiates meta data
 func (m *Master) initMetadata() {
-    // new or read from old
-    m.nm =  newNamespaceManager()
-    m.cm  = newChunkManager()
-    m.csm = newChunkServerManager()
-    return
+	// new or read from old
+	m.nm = newNamespaceManager()
+	m.cm = newChunkManager()
+	m.csm = newChunkServerManager()
+	return
 }
 
 // Shutdown shuts down master
 func (m *Master) Shutdown() {
 	close(m.shutdown)
-    //m.l.Close()
+	//m.l.Close()
 }
 
 // BackgroundActivity does all the background activities
 // server disconnection handle, garbage collection, stale replica detection, etc
 func (m *Master) backgroundActivity() error {
-    // detect dead servers
-    addrs := m.csm.DetectDeadServers()
-    for _, v := range addrs {
-        log.Warningf("remove server %v", v)
-        handles, err := m.csm.RemoveServer(v)
-        if err != nil { return err }
-        m.cm.RemoveChunks(handles, v)
-    }
+	// detect dead servers
+	addrs := m.csm.DetectDeadServers()
+	for _, v := range addrs {
+		log.Warningf("remove server %v", v)
+		handles, err := m.csm.RemoveServer(v)
+		if err != nil {
+			return err
+		}
+		m.cm.RemoveChunks(handles, v)
+	}
 
-    // add replicas for need request
-    handles := m.cm.GetNeedlist()
-    log.Info("Master Background ", handles)
-    if handles != nil {
-        server := make([]gfs.ServerAddress, 1)
-        for i := 0; i < len(handles); i++ {
-            ck := m.cm.chunk[handles[i]]
+	// add replicas for need request
+	handles := m.cm.GetNeedlist()
+	log.Info("Master Background ", handles)
+	if handles != nil {
+		for i := 0; i < len(handles); i++ {
+			ck := m.cm.chunk[handles[i]]
 
-            if ck.expire.Before(time.Now()) {
-                err := func() error {
-                var err error
-                var from, to gfs.ServerAddress
+			if ck.expire.Before(time.Now()) {
+				ck.Lock() // don't grant lease during copy
+				err := m.reReplication(handles[i])
+				log.Info(err)
+				ck.Unlock()
+			}
+		}
+	}
+	return nil
+}
 
-                undo := func() {
-                    log.Warning(err)
-                    if err != nil { // undo
-                        m.csm.Lock()
-                        m.csm.servers[to].chunks[handles[i]] = false
-                        m.csm.Unlock()
-                    }
-                }
+// perform re-Replication
+func (m *Master) reReplication(handle gfs.ChunkHandle) error {
+	// lock chunk, so master will not grant lease in copy time
+	from, to, err := m.csm.ChooseReReplication(handle)
+	if err != nil {
+		return err
+	}
+	log.Warningf("allocate new chunk %v from %v to %v", handle, from, to)
 
-                // lock chunk, so master will not grant lease in copy time
-                ck.Lock()
-                defer ck.Unlock()
+	var cr gfs.CreateChunkReply
+	err = util.Call(to, "ChunkServer.RPCCreateChunk", gfs.CreateChunkArg{handle}, &cr)
+	if err != nil {
+		return err
+	}
 
-                from, to, err = m.csm.ChooseReReplication(handles[i])
-                if err != nil { return err }
-                log.Warningf("allocate new chunk %v from %v to %v", handles[i], from, to)
+	var sr gfs.SendCopyReply
+	err = util.Call(from, "ChunkServer.RPCSendCopy", gfs.SendCopyArg{handle, to}, &sr)
+	if err != nil {
+		return err
+	}
 
-                defer undo()
+	m.cm.RegisterReplica(handle, to)
+	m.csm.AddChunk([]gfs.ServerAddress{to}, handle)
+	return nil
+}
 
-                server[0] = to
-                err = m.csm.AddChunk(server, handles[i])
-                if err != nil { return err }
 
-                var r gfs.SendCopyReply
-                err = util.Call(from, "ChunkServer.RPCSendCopy", gfs.SendCopyArg{handles[i], to}, &r)
-                if err != nil { return err }
+func (m *Master) loadMeta() error {
+    return nil
+}
 
-                m.cm.RegisterReplica(handles[i], to)
-                return nil
-                } ()
-
-                _ = err
-            }
-        }
-    }
+func (m *Master) storeMeta() error {
     return nil
 }
 
 // RPCHeartbeat is called by chunkserver to let the master know that a chunkserver is alive
 func (m *Master) RPCHeartbeat(args gfs.HeartbeatArg, reply *gfs.HeartbeatReply) error {
-    m.csm.Heartbeat(args.Address)
-    for _, handle := range args.LeaseExtensions {
-        m.cm.ExtendLease(handle, args.Address)
-    }
-    return nil
+	rep := m.csm.Heartbeat(args.Address)
+	if rep != nil { // load reported chunks
+		for _, v := range rep {
+			m.cm.RegisterReplica(v.Handle, args.Address)
+			m.csm.AddChunk([]gfs.ServerAddress{args.Address}, v.Handle)
+		}
+	}
+
+	for _, handle := range args.LeaseExtensions {
+		m.cm.ExtendLease(handle, args.Address)
+	}
+	return nil
 }
 
 // RPCGetPrimaryAndSecondaries returns lease holder and secondaries of a chunk.
 // If no one holds the lease currently, grant one.
 func (m *Master) RPCGetPrimaryAndSecondaries(args gfs.GetPrimaryAndSecondariesArg, reply *gfs.GetPrimaryAndSecondariesReply) error {
-    lease, err := m.cm.GetLeaseHolder(args.Handle)
-    if err != nil {
-        return err
-    }
-    reply.Primary = lease.Primary
-    reply.Expire  = lease.Expire
-    reply.Secondaries = lease.Secondaries
-    return nil
+	lease, err := m.cm.GetLeaseHolder(args.Handle)
+	if err != nil {
+		return err
+	}
+	reply.Primary = lease.Primary
+	reply.Expire = lease.Expire
+	reply.Secondaries = lease.Secondaries
+	return nil
 }
 
 // RPCExtendLease extends the lease of chunk if the lessee is nobody or requester.
 func (m *Master) RPCExtendLease(args gfs.ExtendLeaseArg, reply *gfs.ExtendLeaseReply) error {
-    //t, err := m.cm.ExtendLease(args.Handle, args.Address)
-    //if err != nil { return err }
-    //reply.Expire = *t
-    return nil
+	//t, err := m.cm.ExtendLease(args.Handle, args.Address)
+	//if err != nil { return err }
+	//reply.Expire = *t
+	return nil
 }
 
 // RPCGetReplicas is called by client to find all chunkserver that holds the chunk.
 func (m *Master) RPCGetReplicas(args gfs.GetReplicasArg, reply *gfs.GetReplicasReply) error {
-    servers, err := m.cm.GetReplicas(args.Handle)
-    if err != nil { return err }
+	servers, err := m.cm.GetReplicas(args.Handle)
+	if err != nil {
+		return err
+	}
 
-    for _, v := range servers.GetAll() {
-        reply.Locations = append(reply.Locations, v.(gfs.ServerAddress))
-    }
+	for _, v := range servers.GetAll() {
+		reply.Locations = append(reply.Locations, v.(gfs.ServerAddress))
+	}
 
-    return nil
+	return nil
 }
 
 // RPCCreateFile is called by client to create a new file
 func (m *Master) RPCCreateFile(args gfs.CreateFileArg, replay *gfs.CreateFileReply) error {
-    err := m.nm.Create(args.Path)
-    return err
+	err := m.nm.Create(args.Path)
+	return err
 }
 
 // RPCDelete is called by client to delete a file
 func (m *Master) RPCDelete(args gfs.DeleteFileArg, replay *gfs.DeleteFileReply) error {
-    log.Fatal("call to unimplemented RPCDelete")
-    return nil
+	log.Fatal("call to unimplemented RPCDelete")
+	return nil
 }
 
 // RPCMkdir is called by client to make a new directory
 func (m *Master) RPCMkdir(args gfs.MkdirArg, replay *gfs.MkdirReply) error {
-    err := m.nm.Mkdir(args.Path)
-    return err
+	err := m.nm.Mkdir(args.Path)
+	return err
 }
 
 // RPCList is called by client to list all files in specific directory
 func (m *Master) RPCList(args gfs.ListArg, replay *gfs.ListReply) error {
-    log.Fatal("call to unimplemented RPCList")
-    return nil
+	log.Fatal("call to unimplemented RPCList")
+	return nil
 }
 
 // RPCGetFileInfo is called by client to get file information
 func (m *Master) RPCGetFileInfo(args gfs.GetFileInfoArg, reply *gfs.GetFileInfoReply) error {
-    ps, cwd, err := m.nm.lockParents(args.Path)
-    defer m.nm.unlockParents(ps)
-    if (err != nil) { return err }
+	ps, cwd, err := m.nm.lockParents(args.Path)
+	defer m.nm.unlockParents(ps)
+	if err != nil {
+		return err
+	}
 
-    file, ok := cwd.children[ps[len(ps)-1]]
-    if !ok { return fmt.Errorf("File %v does not exist", args.Path) }
-    file.RLock()
-    defer file.RUnlock()
+	file, ok := cwd.children[ps[len(ps)-1]]
+	if !ok {
+		return fmt.Errorf("File %v does not exist", args.Path)
+	}
+	file.RLock()
+	defer file.RUnlock()
 
-    reply.IsDir  = file.isDir
-    reply.Length = file.length
-    reply.Chunks = file.chunks
-    return nil
+	reply.IsDir = file.isDir
+	reply.Length = file.length
+	reply.Chunks = file.chunks
+	return nil
 }
 
 // RPCGetChunkHandle returns the chunk handle of (path, index).
 // If the requested index is bigger than the number of chunks of this path by one, create one.
 func (m *Master) RPCGetChunkHandle(args gfs.GetChunkHandleArg, reply *gfs.GetChunkHandleReply) error {
-    ps, cwd, err := m.nm.lockParents(args.Path)
-    defer m.nm.unlockParents(ps)
-    if err != nil { return err }
+	ps, cwd, err := m.nm.lockParents(args.Path)
+	defer m.nm.unlockParents(ps)
+	if err != nil {
+		return err
+	}
 
-    // append new chunks
-    file, ok := cwd.children[ps[len(ps)-1]]
-    if !ok { return fmt.Errorf("File %v does not exist", args.Path) }
-    file.Lock()
-    defer file.Unlock()
+	// append new chunks
+	file, ok := cwd.children[ps[len(ps)-1]]
+	if !ok {
+		return fmt.Errorf("File %v does not exist", args.Path)
+	}
+	file.Lock()
+	defer file.Unlock()
 
-    if int(args.Index) == int(file.chunks) {
-        file.chunks++
+	if int(args.Index) == int(file.chunks) {
+		file.chunks++
 
-        addrs, err := m.csm.ChooseServers(gfs.DefaultNumReplicas)
-        if err != nil { return err }
+		addrs, err := m.csm.ChooseServers(gfs.DefaultNumReplicas)
+		if err != nil {
+			return err
+		}
 
-        reply.Handle, err = m.cm.CreateChunk(args.Path, addrs)
-        if err != nil { return err }
+		reply.Handle, addrs, err = m.cm.CreateChunk(args.Path, addrs)
+		if err != nil {
+			// WARNING
+			log.Warning("[ignored] An ignored error in RPCGetChunkHandle ", err)
+			return nil
+		}
 
-        err = m.csm.AddChunk(addrs, reply.Handle)
-        if err != nil {
-            log.Warning("[ignored] An ignored error in RPCGetChunkHandle ", err)
-            return nil   // delay the error handle to client
-        }
-    } else {
-        reply.Handle, err = m.cm.GetChunk(args.Path, args.Index)
-    }
+		m.csm.AddChunk(addrs, reply.Handle)
+	} else {
+		reply.Handle, err = m.cm.GetChunk(args.Path, args.Index)
+	}
 
-    return err
+	return err
 }

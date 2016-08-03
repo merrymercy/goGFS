@@ -45,8 +45,8 @@ func newChunkManager() *chunkManager {
 
 // RegisterReplica adds a replica for a chunk
 func (cm *chunkManager) RegisterReplica(handle gfs.ChunkHandle, addr gfs.ServerAddress) error {
-    //cm.Lock()
-    //defer cm.Unlock()
+    cm.Lock()
+    defer cm.Unlock()
 
     chunkinfo, ok := cm.chunk[handle]
     if !ok {
@@ -131,8 +131,9 @@ func (cm *chunkManager) ExtendLease(handle gfs.ChunkHandle, primary gfs.ServerAd
     return nil
 }
 
-// CreateChunk creates a new chunk for path.
-func (cm *chunkManager) CreateChunk(path gfs.Path, addrs []gfs.ServerAddress) (gfs.ChunkHandle, error) {
+// CreateChunk creates a new chunk for path. servers for the chunk are denoted by addrs
+// returns the handle of the new chunk, and the servers that create the chunk successfully
+func (cm *chunkManager) CreateChunk(path gfs.Path, addrs []gfs.ServerAddress) (gfs.ChunkHandle, []gfs.ServerAddress, error) {
     cm.Lock()
     defer cm.Unlock()
 
@@ -149,12 +150,26 @@ func (cm *chunkManager) CreateChunk(path gfs.Path, addrs []gfs.ServerAddress) (g
 
     // update chunk info
     cm.chunk[handle] = &chunkInfo{path : path}
+
+    var errList string
+    var success []gfs.ServerAddress
     for _,v := range addrs {
-        chunkinfo := cm.chunk[handle]
-        chunkinfo.location.Add(v)
+        var r gfs.CreateChunkReply
+        err := util.Call(v, "ChunkServer.RPCCreateChunk", gfs.CreateChunkArg{handle}, &r)
+        if err == nil { // register
+            chunkinfo := cm.chunk[handle]
+            chunkinfo.location.Add(v)
+            success = append(success, v)
+        } else {
+            errList += err.Error() + ";"
+        }
     }
 
-    return handle, nil
+    if errList == "" {
+        return handle, success, nil
+    } else {
+        return handle, success, fmt.Errorf(errList)
+    }
 }
 
 // RemoveChunks removes disconnected chunks

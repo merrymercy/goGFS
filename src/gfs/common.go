@@ -8,6 +8,7 @@ type Offset int64
 type ChunkIndex int
 type ChunkHandle int64
 type ChunkVersion int64
+type Checksum int64
 
 type DataBufferID struct {
 	Handle    ChunkHandle
@@ -18,6 +19,13 @@ type Lease struct {
 	Primary     ServerAddress
 	Expire      time.Time
 	Secondaries []ServerAddress
+}
+
+type PersistentChunkInfo struct {
+    Handle   ChunkHandle
+    Length   Offset
+    Version  ChunkVersion
+    Checksum Checksum
 }
 
 type PathInfo struct {
@@ -75,5 +83,5 @@ const (
 
 	DownloadBufferExpire = 2 * time.Minute
 	DownloadBufferTick   = 10 * time.Second
-    LeaseBufferTick      = 200 * time.Millisecond
+	LeaseBufferTick      = 200 * time.Millisecond
 )

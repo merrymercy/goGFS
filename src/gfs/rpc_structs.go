@@ -14,6 +14,12 @@ import (
 //    ErrorCode ErrorCode
 //}
 
+type ReportSelfArg struct {
+}
+type ReportSelfReply struct {
+    Chunks []PersistentChunkInfo
+}
+
 type ForwardDataArg struct {
 	DataID     DataBufferID
 	Data       []byte
