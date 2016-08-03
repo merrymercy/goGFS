@@ -155,13 +155,12 @@ func (m *Master) reReplication(handle gfs.ChunkHandle) error {
 	return nil
 }
 
-
 func (m *Master) loadMeta() error {
-    return nil
+	return nil
 }
 
 func (m *Master) storeMeta() error {
-    return nil
+	return nil
 }
 
 // RPCHeartbeat is called by chunkserver to let the master know that a chunkserver is alive
@@ -169,6 +168,7 @@ func (m *Master) RPCHeartbeat(args gfs.HeartbeatArg, reply *gfs.HeartbeatReply) 
 	rep := m.csm.Heartbeat(args.Address)
 	if rep != nil { // load reported chunks
 		for _, v := range rep {
+			log.Infof("MASTER restore chunk %v", v.Handle)
 			m.cm.RegisterReplica(v.Handle, args.Address)
 			m.csm.AddChunk([]gfs.ServerAddress{args.Address}, v.Handle)
 		}

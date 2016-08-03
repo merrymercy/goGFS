@@ -38,8 +38,9 @@ func (csm *chunkServerManager) Heartbeat(addr gfs.ServerAddress) []gfs.Persisten
 		log.Info("New chunk server" + addr)
 		csm.servers[addr] = &chunkServerInfo{time.Now(), make(map[gfs.ChunkHandle]bool)}
         var r gfs.ReportSelfReply
-        err := util.Call(addr, "ChunkServer.ReportSelf", gfs.ReportSelfArg{}, &r)
-        if err != nil {
+        err := util.Call(addr, "ChunkServer.RPCReportSelf", gfs.ReportSelfArg{}, &r)
+        log.Warning(r.Chunks)
+        if err == nil {
             return r.Chunks
         } else {
             return nil

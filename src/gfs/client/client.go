@@ -310,7 +310,7 @@ func (c *Client) AppendChunk(handle gfs.ChunkHandle, data []byte) (offset gfs.Of
 		return -1, gfs.Error{gfs.UnknownError, err.Error()}
 	}
 
-	//log.Infof("Client : send append request to primary. data : %v", d.DataID)
+	log.Infof("Client : send append request to primary. data : %v", dataID)
 	var a gfs.AppendChunkReply
 	acargs := gfs.AppendChunkArg{dataID, l.Secondaries}
 	err = util.Call(l.Primary, "ChunkServer.RPCAppendChunk", acargs, &a)

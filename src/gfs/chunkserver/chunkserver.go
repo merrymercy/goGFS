@@ -189,9 +189,10 @@ func (cs *ChunkServer) loadMeta() error {
 	for _, ck := range metas {
         log.Infof("Server %v restore %v version: %v length: %v", cs.address, ck.Handle, ck.Version, ck.Length)
 		cs.chunk[ck.Handle] = &chunkInfo{
-			length:    ck.Length,
-			version:   ck.Version,
-			mutations: make(map[gfs.ChunkVersion]*Mutation),
+			length:        ck.Length,
+			version:       ck.Version,
+            newestVersion: ck.Version,
+			mutations:     make(map[gfs.ChunkVersion]*Mutation),
 		}
 	}
 

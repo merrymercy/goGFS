@@ -29,12 +29,12 @@ func (s *ArraySet) Add(element interface{}) {
 func (s *ArraySet) Delete(element interface{}) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
-    for i, v := range s.arr {
-        if v == element {
-            s.arr = append(s.arr[:i], s.arr[i+1:]...)
-            break
-        }
-    }
+	for i, v := range s.arr {
+		if v == element {
+			s.arr = append(s.arr[:i], s.arr[i+1:]...)
+			break
+		}
+	}
 }
 
 // Size returns the size of the set.
@@ -48,7 +48,10 @@ func (s *ArraySet) Size() int {
 func (s *ArraySet) RandomPick() interface{} {
 	s.lock.RLock()
 	defer s.lock.RUnlock()
-	return s.arr[rand.Intn(len(s.arr))]
+	if len(s.arr) == 0 {
+		panic("ArraySet.RandomPick : No element to pick")
+	}
+	return s.arr[rand.Int()%len(s.arr)]
 }
 
 // GetAll returns all elements of the set.
