@@ -79,7 +79,6 @@ func NewAndServe(addr, masterAddr gfs.ServerAddress, serverRoot string) *ChunkSe
 	}
 	cs.l = l
 
-	//os.Remove(fmt.Sprintf("%s/cs*/chunk*.chk", serverRoot))
     err := cs.loadMeta()
     if err != nil {
         log.Warning("Error in load metadata: ", err)
@@ -107,7 +106,7 @@ func NewAndServe(addr, masterAddr gfs.ServerAddress, serverRoot string) *ChunkSe
 				}()
 			} else {
 				if !cs.dead {
-					log.Fatal(err)
+                    log.Fatal("chunkserver accept error: ", err)
 				}
 			}
 		}
@@ -133,8 +132,8 @@ func NewAndServe(addr, masterAddr gfs.ServerAddress, serverRoot string) *ChunkSe
 			}
 			if err := util.Call(cs.master, "Master.RPCHeartbeat", args, nil); err != nil {
 				// TODO
-				log.Fatal("heartbeat rpc error ", err)
-				log.Exit(1)
+				//log.Fatal("heartbeat rpc error ", err)
+				//log.Exit(1)
 			}
 
 			time.Sleep(gfs.HeartbeatInterval)
@@ -166,6 +165,7 @@ func (cs *ChunkServer) RPCReportSelf(args gfs.ReportSelfArg, reply *gfs.ReportSe
 	return nil
 }
 
+// load metadata from disk
 func (cs *ChunkServer) loadMeta() error {
 	filename := path.Join(cs.serverRoot, MetaFileName)
 	file, err := os.OpenFile(filename, os.O_RDONLY, FilePerm)
@@ -199,7 +199,7 @@ func (cs *ChunkServer) loadMeta() error {
 	return nil
 }
 
-//
+// store metadate to disk
 func (cs *ChunkServer) storeMeta() error {
 	filename := path.Join(cs.serverRoot, MetaFileName)
 	file, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE, FilePerm)

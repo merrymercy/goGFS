@@ -17,6 +17,7 @@ type Master struct {
 	serverRoot string
 	l          net.Listener
 	shutdown   chan struct{}
+	dead       bool              // set to ture if server is shuntdown
 
 	nm  *namespaceManager
 	cm  *chunkManager
@@ -58,8 +59,9 @@ func NewAndServe(address gfs.ServerAddress, serverRoot string) *Master {
 					conn.Close()
 				}()
 			} else {
-				log.Fatal("accept error:", err)
-				log.Exit(1)
+				if !m.dead {
+                    log.Fatal("master accept error:", err)
+				}
 			}
 		}
 	}()
@@ -93,8 +95,12 @@ func (m *Master) initMetadata() {
 
 // Shutdown shuts down master
 func (m *Master) Shutdown() {
-	close(m.shutdown)
-	//m.l.Close()
+	if !m.dead {
+		log.Warning(m.address, " Shutdown")
+		m.dead = true
+		close(m.shutdown)
+		m.l.Close()
+    }
 }
 
 // BackgroundActivity does all the background activities
