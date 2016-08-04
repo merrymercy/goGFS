@@ -93,18 +93,27 @@ func newNamespaceManager() *namespaceManager {
 // lockParents place read lock on all parents of p. It returns the list of
 // parents' name, the direct parent nsTree. If a parent does not exist,
 // an error is also returned.
-func (nm *namespaceManager) lockParents(p gfs.Path) ([]string, *nsTree, error) {
+func (nm *namespaceManager) lockParents(p gfs.Path, goDown bool) ([]string, *nsTree, error) {
 	ps := strings.Split(string(p), "/")[1:]
 	cwd := nm.root
-	if len(ps) > 1 {
+    log.Info("ps ", ps, " len: ", len(ps))
+	if len(ps) > 0 {
 		cwd.RLock()
-		for _, name := range ps[:len(ps)-1] {
+        log.Info("lock root")
+		for i, name := range ps[:len(ps)] {
 			c, ok := cwd.children[name]
 			if !ok {
 				return ps, cwd, fmt.Errorf("path %s not found", p)
 			}
-			cwd = c
-			cwd.RLock()
+            if i == len(ps) - 1 {
+                if goDown { // go down deeper?
+                    cwd = c
+                }
+            } else {
+                cwd = c
+                log.Info("lock ", name)
+                cwd.RLock()
+            }
 		}
 	}
 	return ps, cwd, nil
@@ -114,9 +123,9 @@ func (nm *namespaceManager) lockParents(p gfs.Path) ([]string, *nsTree, error) {
 // it just stops and returns. This is the inverse of lockParents.
 func (nm *namespaceManager) unlockParents(ps []string) {
 	cwd := nm.root
-	if len(ps) > 1 {
+	if len(ps) > 0 {
 		cwd.RUnlock()
-		for _, name := range ps[:len(ps)-1] {
+		for _, name := range ps[:len(ps) - 1] {
 			c, ok := cwd.children[name]
 			if !ok {
 				return
@@ -141,19 +150,14 @@ func (nm *namespaceManager) Create(p gfs.Path) error {
 	var filename string
 	p, filename = nm.PartionLastName(p)
 
-	ps, cwd, err := nm.lockParents(p)
+    log.Info("create file ", p, "/", filename)
+
+	ps, cwd, err := nm.lockParents(p, true)
 	defer nm.unlockParents(ps)
 	if err != nil {
 		return err
 	}
 
-	if len(ps) > 0 {
-		var ok bool
-		cwd, ok = cwd.children[ps[len(ps)-1]]
-		if !ok {
-			return fmt.Errorf("path %s does not exist", ps[len(ps)-1])
-		}
-	}
 	cwd.Lock()
 	defer cwd.Unlock()
 
@@ -166,6 +170,21 @@ func (nm *namespaceManager) Create(p gfs.Path) error {
 
 // Create creates an empty file on path p. All parents should exist.
 func (nm *namespaceManager) Delete(p gfs.Path) error {
+	ps, cwd, err := nm.lockParents(p, false)
+	defer nm.unlockParents(ps)
+	if err != nil {
+		return err
+	}
+
+    filename := ps[len(ps) - 1]
+
+    cwd.Lock()
+    defer cwd.Unlock()
+
+    // rename, laze delete
+    node := cwd.children[filename]
+    delete(cwd.children, filename)
+    cwd.children["_del_" + filename] = node
 	return nil
 }
 
@@ -174,18 +193,12 @@ func (nm *namespaceManager) Mkdir(p gfs.Path) error {
 	var filename string
 	p, filename = nm.PartionLastName(p)
 
-	ps, cwd, err := nm.lockParents(p)
+    log.Info("mkdir ", p, "/", filename)
+
+	ps, cwd, err := nm.lockParents(p, true)
 	defer nm.unlockParents(ps)
 	if err != nil {
 		return err
-	}
-
-	if len(ps) > 0 {
-		var ok bool
-		cwd, ok = cwd.children[ps[len(ps)-1]]
-		if !ok {
-			return fmt.Errorf("path %s does not exist", ps[len(ps)-1])
-		}
 	}
 
 	cwd.Lock()
@@ -201,27 +214,29 @@ func (nm *namespaceManager) Mkdir(p gfs.Path) error {
 
 // List returns information of all files and directories inside p.
 func (nm *namespaceManager) List(p gfs.Path) ([]gfs.PathInfo, error) {
-	ps, cwd, err := nm.lockParents(p)
-	defer nm.unlockParents(ps)
-	if err != nil {
-		return nil, err
-	}
+    log.Info("list ", p)
 
-	name := ps[len(ps)-1]
-	cwd, ok := cwd.children[name]
-	if !ok {
-		return nil, fmt.Errorf("path %s does not exist", p)
-	}
 
-	cwd.RLock()
-	defer cwd.RUnlock()
+    var dir *nsTree
+    if p == gfs.Path("/") {
+        dir = nm.root
+    } else {
+        ps, cwd, err := nm.lockParents(p, true)
+        defer nm.unlockParents(ps)
+        if err != nil {
+            return nil, err
+        }
+        dir = cwd
+    }
+    dir.RLock()
+    defer dir.RUnlock()
 
-	if !cwd.isDir {
+	if !dir.isDir {
 		return nil, fmt.Errorf("path %s is a file, not directory", p)
 	}
 
-	ls := make([]gfs.PathInfo, 0, len(cwd.children))
-	for name, v := range cwd.children {
+	ls := make([]gfs.PathInfo, 0, len(dir.children))
+	for name, v := range dir.children {
 		ls = append(ls, gfs.PathInfo{
 			Name:   name,
 			IsDir:  v.isDir,

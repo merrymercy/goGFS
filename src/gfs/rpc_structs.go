@@ -17,7 +17,7 @@ import (
 type ReportSelfArg struct {
 }
 type ReportSelfReply struct {
-    Chunks []PersistentChunkInfo
+	Chunks []PersistentChunkInfo
 }
 
 type ForwardDataArg struct {

@@ -102,7 +102,7 @@ func (cm *chunkManager) RegisterReplica(handle gfs.ChunkHandle, addr gfs.ServerA
 
 	chunkinfo, ok := cm.chunk[handle]
 	if !ok {
-		return fmt.Errorf("cannot find chunk %d", int64(handle))
+		return fmt.Errorf("cannot find chunk %v", handle)
 	}
 	chunkinfo.location.Add(addr)
 	return nil
@@ -115,7 +115,7 @@ func (cm *chunkManager) GetReplicas(handle gfs.ChunkHandle) (*util.ArraySet, err
 
 	chunkinfo, ok := cm.chunk[handle]
 	if !ok {
-		return nil, fmt.Errorf("cannot find chunk %d", int64(handle))
+		return nil, fmt.Errorf("cannot find chunk %v", handle)
 	}
 	return &chunkinfo.location, nil
 }

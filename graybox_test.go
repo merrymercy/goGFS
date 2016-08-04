@@ -58,6 +58,44 @@ func TestCreateFile(t *testing.T) {
 	}
 }
 
+func TestMkdirDeleteList(t *testing.T) {
+	ch := make(chan error, 9)
+	ch <- m.RPCMkdir(gfs.MkdirArg{"/dir1"}, &gfs.MkdirReply{})
+	ch <- m.RPCMkdir(gfs.MkdirArg{"/dir2"}, &gfs.MkdirReply{})
+	ch <- m.RPCCreateFile(gfs.CreateFileArg{"/file1.txt"}, &gfs.CreateFileReply{})
+	ch <- m.RPCCreateFile(gfs.CreateFileArg{"/file2.txt"}, &gfs.CreateFileReply{})
+	ch <- m.RPCCreateFile(gfs.CreateFileArg{"/dir1/file3.txt"}, &gfs.CreateFileReply{})
+	ch <- m.RPCCreateFile(gfs.CreateFileArg{"/dir1/file4.txt"}, &gfs.CreateFileReply{})
+	ch <- m.RPCCreateFile(gfs.CreateFileArg{"/dir2/fiel5.txt"}, &gfs.CreateFileReply{})
+
+	todelete := make(map[string]bool)
+	todelete["dir1"] = true
+	todelete["dir2"] = true
+	todelete["file1.txt"] = true
+	todelete["file2.txt"] = true
+
+	var l gfs.ListReply
+	ch <- m.RPCList(gfs.ListArg{"/"}, &l)
+	for _, v := range l.Files {
+		delete(todelete, v.Name)
+	}
+	if len(todelete) != 0 {
+		t.Error("error in list root path, get", l.Files)
+	}
+
+	todelete["file3.txt"] = true
+	todelete["file4.txt"] = true
+	ch <- m.RPCList(gfs.ListArg{"/dir1"}, &l)
+	for _, v := range l.Files {
+		delete(todelete, v.Name)
+	}
+	if len(todelete) != 0 {
+		t.Error("error in list root path, get", l.Files)
+	}
+
+	errorAll(ch, 9, t)
+}
+
 func TestRPCGetChunkHandle(t *testing.T) {
 	var r1, r2 gfs.GetChunkHandleReply
 	path := gfs.Path("/test1.txt")
@@ -397,8 +435,12 @@ func TestComprehensiveOperation(t *testing.T) {
 		}(i)
 	}
 
-	fmt.Println("###### Please Wait for a 5 seconds test...")
-	time.Sleep(5 * time.Second)
+	fmt.Println("###### Continue life for the elder to pass a long time test...")
+	for i := 0; i < 6; i++ {
+		fmt.Print(" +1s ")
+		time.Sleep(time.Second)
+	}
+	fmt.Println("")
 	close(done)
 	wg.Wait()
 
@@ -417,11 +459,8 @@ func TestComprehensiveOperation(t *testing.T) {
 // Shutdown two chunk servers during appending
 func TestShutdownInAppend(t *testing.T) {
 	p := gfs.Path("/shutdown.txt")
-	ch := make(chan error, N+2)
+	ch := make(chan error, N+3)
 	ch <- c.Create(p)
-
-	var r1 gfs.GetChunkHandleReply
-	ch <- m.RPCGetChunkHandle(gfs.GetChunkHandleArg{p, 0}, &r1)
 
 	expected := make(map[int][]byte)
 	todelete := make(map[int][]byte)
@@ -431,11 +470,10 @@ func TestShutdownInAppend(t *testing.T) {
 	}
 
 	// get primary and a secondary
+	var r1 gfs.GetChunkHandleReply
+	ch <- m.RPCGetChunkHandle(gfs.GetChunkHandleArg{p, 0}, &r1)
 	var l gfs.GetReplicasReply
-	err := m.RPCGetReplicas(gfs.GetReplicasArg{r1.Handle}, &l)
-	if err != nil {
-		t.Error(err)
-	}
+	ch <- m.RPCGetReplicas(gfs.GetReplicasArg{r1.Handle}, &l)
 
 	for i := 0; i < N; i++ {
 		go func(x int) {
@@ -452,7 +490,7 @@ func TestShutdownInAppend(t *testing.T) {
 		}
 	}
 
-	errorAll(ch, N+2, t)
+	errorAll(ch, N+3, t)
 
 	// check correctness, append at least once
 	for x := 0; x < gfs.MaxChunkSize/2 && len(todelete) > 0; x++ {
@@ -585,10 +623,11 @@ func TestPersistentChunkServer(t *testing.T) {
 
 // Shutdown master. You must store the meta data of master persistently
 func TestPersistentMaster(t *testing.T) {
-	p := gfs.Path("/persistent-master.txt")
+	p := gfs.Path("/persistent/master.txt")
 	msg := []byte("Don't Lose Yourself")
 
-	ch := make(chan error, 4)
+	ch := make(chan error, 5)
+	ch <- c.Mkdir("/persistent")
 	ch <- c.Create(p)
 
 	_, err := c.Append(p, msg)
@@ -616,7 +655,7 @@ func TestPersistentMaster(t *testing.T) {
 		t.Errorf("read wrong data \"%v\", expect \"%v\"", string(buf), string(msg))
 	}
 
-	errorAll(ch, 4, t)
+	errorAll(ch, 5, t)
 }
 
 func TestMain(tm *testing.M) {
@@ -627,7 +666,7 @@ func TestMain(tm *testing.M) {
 		log.Fatal("cannot create temporary directory: ", err)
 	}
 
-	log.SetLevel(log.FatalLevel)
+	//log.SetLevel(log.FatalLevel)
 
 	// run master
 	os.Mkdir(path.Join(root, "m"), 0755)

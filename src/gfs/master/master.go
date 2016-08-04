@@ -277,32 +277,33 @@ func (m *Master) RPCGetReplicas(args gfs.GetReplicasArg, reply *gfs.GetReplicasR
 }
 
 // RPCCreateFile is called by client to create a new file
-func (m *Master) RPCCreateFile(args gfs.CreateFileArg, replay *gfs.CreateFileReply) error {
+func (m *Master) RPCCreateFile(args gfs.CreateFileArg, reply *gfs.CreateFileReply) error {
 	err := m.nm.Create(args.Path)
 	return err
 }
 
 // RPCDelete is called by client to delete a file
-func (m *Master) RPCDelete(args gfs.DeleteFileArg, replay *gfs.DeleteFileReply) error {
-	log.Fatal("call to unimplemented RPCDelete")
-	return nil
+func (m *Master) RPCDelete(args gfs.DeleteFileArg, reply *gfs.DeleteFileReply) error {
+	err := m.nm.Delete(args.Path)
+	return err
 }
 
 // RPCMkdir is called by client to make a new directory
-func (m *Master) RPCMkdir(args gfs.MkdirArg, replay *gfs.MkdirReply) error {
+func (m *Master) RPCMkdir(args gfs.MkdirArg, reply *gfs.MkdirReply) error {
 	err := m.nm.Mkdir(args.Path)
 	return err
 }
 
 // RPCList is called by client to list all files in specific directory
-func (m *Master) RPCList(args gfs.ListArg, replay *gfs.ListReply) error {
-	log.Fatal("call to unimplemented RPCList")
-	return nil
+func (m *Master) RPCList(args gfs.ListArg, reply *gfs.ListReply) error {
+    var err error
+    reply.Files, err = m.nm.List(args.Path)
+	return err
 }
 
 // RPCGetFileInfo is called by client to get file information
 func (m *Master) RPCGetFileInfo(args gfs.GetFileInfoArg, reply *gfs.GetFileInfoReply) error {
-	ps, cwd, err := m.nm.lockParents(args.Path)
+	ps, cwd, err := m.nm.lockParents(args.Path, false)
 	defer m.nm.unlockParents(ps)
 	if err != nil {
 		return err
@@ -324,7 +325,7 @@ func (m *Master) RPCGetFileInfo(args gfs.GetFileInfoArg, reply *gfs.GetFileInfoR
 // RPCGetChunkHandle returns the chunk handle of (path, index).
 // If the requested index is bigger than the number of chunks of this path by one, create one.
 func (m *Master) RPCGetChunkHandle(args gfs.GetChunkHandleArg, reply *gfs.GetChunkHandleReply) error {
-	ps, cwd, err := m.nm.lockParents(args.Path)
+	ps, cwd, err := m.nm.lockParents(args.Path, false)
 	defer m.nm.unlockParents(ps)
 	if err != nil {
 		return err
