@@ -198,7 +198,7 @@ func (c *Client) Append(path gfs.Path, data []byte) (offset gfs.Offset, err erro
 			if err == nil || err.(gfs.Error).Code == gfs.AppendExceedChunkSize {
 				break
 			}
-			//log.Info("Append connection error, try again", err)
+			log.Info("Append connection error, try again", err)
 		}
 		if err == nil || err.(gfs.Error).Code != gfs.AppendExceedChunkSize {
 			break
@@ -244,7 +244,7 @@ func (c *Client) ReadChunk(handle gfs.ChunkHandle, offset gfs.Offset, data []byt
 	if err != nil {
 		return 0, gfs.Error{gfs.UnknownError, err.Error()}
 	}
-	loc := l.Locations[rand.Int()%len(l.Locations)]
+	loc := l.Locations[rand.Intn(len(l.Locations))]
 
 	var r gfs.ReadChunkReply
 	r.Data = data

@@ -27,11 +27,63 @@ type chunkInfo struct {
 	location util.ArraySet     // set of replica locations
 	primary  gfs.ServerAddress // primary chunkserver
 	expire   time.Time         // lease expire time
+    version  gfs.ChunkVersion
+	checksum gfs.Checksum
 	path     gfs.Path
 }
 
 type fileInfo struct {
 	handles []gfs.ChunkHandle
+}
+
+type serialChunkInfo struct {
+	Path gfs.Path
+	Info []gfs.PersistentChunkInfo
+}
+
+func (cm *chunkManager) Deserialize(files []serialChunkInfo) error {
+	cm.RLock()
+	defer cm.RUnlock()
+
+    now := time.Now()
+    for _, v := range files {
+        log.Info("Master restore files ", v.Path)
+        f := new(fileInfo)
+        for _, ck := range v.Info {
+            f.handles = append(f.handles, ck.Handle)
+            log.Info("Master restore chunk ", ck.Handle)
+            cm.chunk[ck.Handle] = &chunkInfo{
+                expire   : now,
+                version  : ck.Version,
+                checksum : ck.Checksum,
+            }
+        }
+        cm.file[v.Path] = f
+    }
+
+    return nil
+}
+
+func (cm *chunkManager) Serialize() []serialChunkInfo {
+	cm.RLock()
+	defer cm.RUnlock()
+
+	var ret []serialChunkInfo
+	for k, v := range cm.file {
+		var chunks []gfs.PersistentChunkInfo
+		for _, handle := range v.handles {
+			chunks = append(chunks, gfs.PersistentChunkInfo{
+				Handle:   handle,
+				Length:   0, // TODO
+				Version:  0,
+				Checksum: 0,
+			})
+		}
+
+		ret = append(ret, serialChunkInfo{Path: k, Info: chunks})
+	}
+
+	return ret
 }
 
 func newChunkManager() *chunkManager {
@@ -204,6 +256,7 @@ func (cm *chunkManager) GetNeedlist() []gfs.ChunkHandle {
 
 	// clear list
 	var newlist []gfs.ChunkHandle
+    log.Warning(cm.replicasNeedList)
 	for _, v := range cm.replicasNeedList {
 		if cm.chunk[v].location.Size() < gfs.MinimumNumReplicas {
 			newlist = append(newlist, v)

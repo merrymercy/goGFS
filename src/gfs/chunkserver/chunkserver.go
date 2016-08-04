@@ -79,23 +79,20 @@ func NewAndServe(addr, masterAddr gfs.ServerAddress, serverRoot string) *ChunkSe
 	}
 	cs.l = l
 
-    err := cs.loadMeta()
-    if err != nil {
-        log.Warning("Error in load metadata: ", err)
-    }
+	err := cs.loadMeta()
+	if err != nil {
+		log.Warning("Error in load metadata: ", err)
+	}
 	// Mkdir
 	//err := os.Mkdir(serverRoot, FilePerm)
 	//if err != nil { log.Fatal("mkdir", err) }
 
-	shutdown := make(chan struct{})
 	// RPC Handler
 	go func() {
-	loop:
 		for {
 			select {
 			case <-cs.shutdown:
-				close(shutdown)
-				break loop
+				return
 			default:
 			}
 			conn, err := cs.l.Accept()
@@ -106,7 +103,7 @@ func NewAndServe(addr, masterAddr gfs.ServerAddress, serverRoot string) *ChunkSe
 				}()
 			} else {
 				if !cs.dead {
-                    log.Fatal("chunkserver accept error: ", err)
+					log.Fatal("chunkserver accept error: ", err)
 				}
 			}
 		}
@@ -114,11 +111,10 @@ func NewAndServe(addr, masterAddr gfs.ServerAddress, serverRoot string) *ChunkSe
 
 	// Heartbeat
 	go func() {
-	loop:
 		for {
 			select {
-			case <-shutdown:
-				break loop
+			case <-cs.shutdown:
+				return
 			default:
 			}
 			pe := cs.pendingLeaseExtensions.GetAllAndClear()
@@ -174,7 +170,6 @@ func (cs *ChunkServer) loadMeta() error {
 	}
 	defer file.Close()
 
-
 	var metas []gfs.PersistentChunkInfo
 	dec := gob.NewDecoder(file)
 	err = dec.Decode(&metas)
@@ -182,16 +177,16 @@ func (cs *ChunkServer) loadMeta() error {
 		return err
 	}
 
-    log.Infof("Server %v : load metadata len: %v", cs.address, len(metas))
+	log.Infof("Server %v : load metadata len: %v", cs.address, len(metas))
 
 	// TODO : add check
 	// add chunks to server
 	for _, ck := range metas {
-        log.Infof("Server %v restore %v version: %v length: %v", cs.address, ck.Handle, ck.Version, ck.Length)
+		log.Infof("Server %v restore %v version: %v length: %v", cs.address, ck.Handle, ck.Version, ck.Length)
 		cs.chunk[ck.Handle] = &chunkInfo{
 			length:        ck.Length,
 			version:       ck.Version,
-            newestVersion: ck.Version,
+			newestVersion: ck.Version,
 			mutations:     make(map[gfs.ChunkVersion]*Mutation),
 		}
 	}
@@ -215,7 +210,7 @@ func (cs *ChunkServer) storeMeta() error {
 		})
 	}
 
-    log.Infof("Server %v : store metadata len: %v", cs.address, len(metas))
+	log.Infof("Server %v : store metadata len: %v", cs.address, len(metas))
 	enc := gob.NewEncoder(file)
 	err = enc.Encode(metas)
 
@@ -231,10 +226,10 @@ func (cs *ChunkServer) Shutdown() {
 		close(cs.shutdown)
 		cs.l.Close()
 	}
-    err := cs.storeMeta()
-    if err != nil {
-        log.Warning("error in store metadeta: ", err)
-    }
+	err := cs.storeMeta()
+	if err != nil {
+		log.Warning("error in store metadeta: ", err)
+	}
 }
 
 // RPCPushDataAndForward is called by client.

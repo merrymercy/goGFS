@@ -21,6 +21,7 @@ func newChunkServerManager() *chunkServerManager {
 	csm := &chunkServerManager{
 		servers: make(map[gfs.ServerAddress]*chunkServerInfo),
 	}
+    log.Info("-----------new chunk server manager")
 	return csm
 }
 
@@ -33,21 +34,22 @@ func (csm *chunkServerManager) Heartbeat(addr gfs.ServerAddress) []gfs.Persisten
 	csm.Lock()
 	defer csm.Unlock()
 
+
 	sv, ok := csm.servers[addr]
 	if !ok {
 		log.Info("New chunk server" + addr)
 		csm.servers[addr] = &chunkServerInfo{time.Now(), make(map[gfs.ChunkHandle]bool)}
-        var r gfs.ReportSelfReply
-        err := util.Call(addr, "ChunkServer.RPCReportSelf", gfs.ReportSelfArg{}, &r)
-        log.Warning(r.Chunks)
-        if err == nil {
-            return r.Chunks
-        } else {
-            return nil
-        }
+		var r gfs.ReportSelfReply
+		err := util.Call(addr, "ChunkServer.RPCReportSelf", gfs.ReportSelfArg{}, &r)
+		//log.Warning(r.Chunks)
+		if err == nil {
+			return r.Chunks
+		} else {
+			return nil
+		}
 	} else {
 		sv.lastHeartbeat = time.Now()
-        return nil
+		return nil
 	}
 }
 
@@ -65,10 +67,16 @@ func (csm *chunkServerManager) AddChunk(addrs []gfs.ServerAddress, handle gfs.Ch
 // called when the replicas number of a chunk is less than gfs.MinimumNumReplicas
 // returns two server address, the master will call 'from' to send a copy to 'to'
 func (csm *chunkServerManager) ChooseReReplication(handle gfs.ChunkHandle) (from, to gfs.ServerAddress, err error) {
+    csm.Lock()
+    defer csm.Unlock()
+    log.Warning("servers: ", csm.servers)
+
 	from = ""
 	to = ""
 	err = nil
+    log.Info("re-re search for ")
 	for a, v := range csm.servers {
+        log.Info("check ", a)
 		if v.chunks[handle] {
 			from = a
 		} else {
