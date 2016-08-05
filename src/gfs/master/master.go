@@ -296,8 +296,8 @@ func (m *Master) RPCMkdir(args gfs.MkdirArg, reply *gfs.MkdirReply) error {
 
 // RPCList is called by client to list all files in specific directory
 func (m *Master) RPCList(args gfs.ListArg, reply *gfs.ListReply) error {
-    var err error
-    reply.Files, err = m.nm.List(args.Path)
+	var err error
+	reply.Files, err = m.nm.List(args.Path)
 	return err
 }
 

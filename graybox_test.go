@@ -218,6 +218,8 @@ func TestAppendChunk(t *testing.T) {
 	}
 	wg.Wait()
 
+	checkReplicas(r1.Handle, N*2, t)
+
 	for x := 0; x < N; x++ {
 		buf := make([]byte, 2)
 		n, err := c.ReadChunk(r1.Handle, gfs.Offset(x*2), buf)
@@ -435,6 +437,7 @@ func TestComprehensiveOperation(t *testing.T) {
 		}(i)
 	}
 
+	// wait
 	fmt.Println("###### Continue life for the elder to pass a long time test...")
 	for i := 0; i < 6; i++ {
 		fmt.Print(" +1s ")
@@ -493,6 +496,7 @@ func TestShutdownInAppend(t *testing.T) {
 	errorAll(ch, N+3, t)
 
 	// check correctness, append at least once
+	// TODO : stricter - check replicas
 	for x := 0; x < gfs.MaxChunkSize/2 && len(todelete) > 0; x++ {
 		buf := make([]byte, 2)
 		n, err := c.Read(p, gfs.Offset(x*2), buf)
@@ -581,7 +585,7 @@ func TestReReplication(t *testing.T) {
 // Shutdown all chunk servers. You must store the meta data of chunkserver persistently
 func TestPersistentChunkServer(t *testing.T) {
 	p := gfs.Path("/persistent-chunkserver.txt")
-	msg := []byte("Don't Lose Me")
+	msg := []byte("Don't Lose Me.")
 
 	ch := make(chan error, 4)
 	ch <- c.Create(p)
@@ -605,7 +609,7 @@ func TestPersistentChunkServer(t *testing.T) {
 	fmt.Println("##### Waiting for Chunk Servers to report their chunks to master...")
 	time.Sleep(2 * gfs.ServerTimeout)
 
-	// append again to confirm all infomation about chunk has been reloaded properly
+	// append again to confirm all information about chunk has been reloaded properly
 	_, err = c.Append(p, msg)
 	ch <- err
 
@@ -624,7 +628,7 @@ func TestPersistentChunkServer(t *testing.T) {
 // Shutdown master. You must store the meta data of master persistently
 func TestPersistentMaster(t *testing.T) {
 	p := gfs.Path("/persistent/master.txt")
-	msg := []byte("Don't Lose Yourself")
+	msg := []byte("Don't Lose Yourself.")
 
 	ch := make(chan error, 5)
 	ch <- c.Mkdir("/persistent")
@@ -642,7 +646,7 @@ func TestPersistentMaster(t *testing.T) {
 	m = master.NewAndServe(mAdd, path.Join(root, "m"))
 	time.Sleep(2 * gfs.ServerTimeout)
 
-	//append again to confirm all infomation about chunk has been reloaded properly
+	//append again to confirm all information about chunk has been reloaded properly
 	_, err = c.Append(p, msg)
 	ch <- err
 
@@ -666,7 +670,7 @@ func TestMain(tm *testing.M) {
 		log.Fatal("cannot create temporary directory: ", err)
 	}
 
-	//log.SetLevel(log.FatalLevel)
+	log.SetLevel(log.FatalLevel)
 
 	// run master
 	os.Mkdir(path.Join(root, "m"), 0755)

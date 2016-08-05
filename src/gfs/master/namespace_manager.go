@@ -96,10 +96,10 @@ func newNamespaceManager() *namespaceManager {
 func (nm *namespaceManager) lockParents(p gfs.Path, goDown bool) ([]string, *nsTree, error) {
 	ps := strings.Split(string(p), "/")[1:]
 	cwd := nm.root
-    log.Info("ps ", ps, " len: ", len(ps))
+    //log.Info("ps ", ps, " len: ", len(ps))
 	if len(ps) > 0 {
 		cwd.RLock()
-        log.Info("lock root")
+        //log.Info("lock root")
 		for i, name := range ps[:len(ps)] {
 			c, ok := cwd.children[name]
 			if !ok {
@@ -111,7 +111,7 @@ func (nm *namespaceManager) lockParents(p gfs.Path, goDown bool) ([]string, *nsT
                 }
             } else {
                 cwd = c
-                log.Info("lock ", name)
+                //log.Info("lock ", name)
                 cwd.RLock()
             }
 		}

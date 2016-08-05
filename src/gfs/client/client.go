@@ -198,7 +198,7 @@ func (c *Client) Append(path gfs.Path, data []byte) (offset gfs.Offset, err erro
 			if err == nil || err.(gfs.Error).Code == gfs.AppendExceedChunkSize {
 				break
 			}
-			log.Info("Append connection error, try again", err)
+			log.Info("Append connection error, try again ", err)
 		}
 		if err == nil || err.(gfs.Error).Code != gfs.AppendExceedChunkSize {
 			break
@@ -303,7 +303,7 @@ func (c *Client) AppendChunk(handle gfs.ChunkHandle, data []byte) (offset gfs.Of
 
 	//log.Infof("Client : get locations %v", chain)
 
-	//log.Infof("Client : push data %v to primary %v", dataID, l.Primary)
+	log.Infof("Client : push data %v to %v", dataID, chain[0])
 	var d gfs.ForwardDataReply
 	err = util.Call(chain[0], "ChunkServer.RPCForwardData", gfs.ForwardDataArg{dataID, data, chain[1:]}, &d)
 	if err != nil {

@@ -22,10 +22,10 @@ type Lease struct {
 }
 
 type PersistentChunkInfo struct {
-    Handle   ChunkHandle
-    Length   Offset
-    Version  ChunkVersion
-    Checksum Checksum
+	Handle   ChunkHandle
+	Length   Offset
+	Version  ChunkVersion
+	Checksum Checksum
 }
 
 type PathInfo struct {
@@ -79,7 +79,7 @@ const (
 	MaxAppendSize = MaxChunkSize / 4
 
 	DefaultNumReplicas = 3
-	MinimumNumReplicas = 2
+	MinimumNumReplicas = 3
 
 	DownloadBufferExpire = 2 * time.Minute
 	DownloadBufferTick   = 10 * time.Second

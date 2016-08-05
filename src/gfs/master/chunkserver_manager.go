@@ -68,14 +68,11 @@ func (csm *chunkServerManager) AddChunk(addrs []gfs.ServerAddress, handle gfs.Ch
 func (csm *chunkServerManager) ChooseReReplication(handle gfs.ChunkHandle) (from, to gfs.ServerAddress, err error) {
 	csm.Lock()
 	defer csm.Unlock()
-	log.Warning("servers: ", csm.servers)
 
 	from = ""
 	to = ""
 	err = nil
-	log.Info("re-re search for ")
 	for a, v := range csm.servers {
-		log.Info("check ", a)
 		if v.chunks[handle] {
 			from = a
 		} else {

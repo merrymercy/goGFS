@@ -79,13 +79,19 @@ func NewAndServe(addr, masterAddr gfs.ServerAddress, serverRoot string) *ChunkSe
 	}
 	cs.l = l
 
-	err := cs.loadMeta()
+	// Mkdir
+	_, err := os.Stat(serverRoot)
+	if err != nil { // not exist
+		err := os.Mkdir(serverRoot, FilePerm)
+		if err != nil {
+			log.Fatal("error in mkdir ", err)
+		}
+	}
+
+	err = cs.loadMeta()
 	if err != nil {
 		log.Warning("Error in load metadata: ", err)
 	}
-	// Mkdir
-	//err := os.Mkdir(serverRoot, FilePerm)
-	//if err != nil { log.Fatal("mkdir", err) }
 
 	// RPC Handler
 	go func() {
@@ -128,11 +134,12 @@ func NewAndServe(addr, masterAddr gfs.ServerAddress, serverRoot string) *ChunkSe
 			}
 			if err := util.Call(cs.master, "Master.RPCHeartbeat", args, nil); err != nil {
 				// TODO
-				//log.Fatal("heartbeat rpc error ", err)
+				log.Info("heartbeat rpc error ", err)
 				//log.Exit(1)
 			}
 
 			time.Sleep(gfs.HeartbeatInterval)
+			log.Info(cs.address, " Beat")
 		}
 	}()
 
@@ -231,26 +238,6 @@ func (cs *ChunkServer) Shutdown() {
 		log.Warning("error in store metadeta: ", err)
 	}
 }
-
-// RPCPushDataAndForward is called by client.
-// It saves client pushed data to memory buffer and forward to all other replicas.
-// Returns a DataID which represents the index in the memory buffer.
-//func (cs *ChunkServer) RPCPushDataAndForward(args gfs.PushDataAndForwardArg, reply *gfs.PushDataAndForwardReply) error {
-//	log.Fatal("deserted function")
-//
-//	if len(args.Data) > gfs.MaxChunkSize {
-//		return fmt.Errorf("Data is too large. Size %v > MaxSize %v", len(args.Data), gfs.MaxChunkSize)
-//	}
-//
-//	id := cs.dl.New(args.Handle)
-//	cs.dl.Set(id, args.Data)
-//	//log.Infof("Server %v : get data %v (primary)", cs.address, id)
-//
-//	err := util.CallAll(args.ForwardTo, "ChunkServer.RPCForwardData", gfs.ForwardDataArg{id, args.Data})
-//
-//	reply.DataID = id
-//	return err
-//}
 
 // RPCForwardData is called by another replica who sends data to the current memory buffer.
 // TODO: This should be replaced by a chain forwarding.
@@ -452,7 +439,7 @@ func (cs *ChunkServer) RPCApplyMutation(args gfs.ApplyMutationArg, reply *gfs.Ap
 	mutation := Mutation{args.Mtype, args.Version, data, args.Offset}
 	ck.Lock()
 	if _, ok := ck.mutations[args.Version]; ok {
-		return fmt.Errorf("2 Duplicated mutation version %v for chunk %v", args.Version, handle)
+		return fmt.Errorf("Duplicated mutation version %v for chunk %v", args.Version, handle)
 	}
 	ck.mutations[args.Version] = &mutation
 	ck.Unlock()
@@ -537,7 +524,7 @@ func (cs *ChunkServer) writeChunk(handle gfs.ChunkHandle, version gfs.ChunkVersi
 	}
 	ck.version = version
 
-	//log.Infof("Server %v : write to chunk %v version %v", cs.address, handle, version)
+	log.Infof("Server %v : write to chunk %v version %v", cs.address, handle, version)
 	filename := path.Join(cs.serverRoot, fmt.Sprintf("chunk%v.chk", handle))
 	file, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE, FilePerm)
 	if err != nil {
@@ -561,7 +548,7 @@ func (cs *ChunkServer) readChunk(handle gfs.ChunkHandle, offset gfs.Offset, data
 	if err != nil {
 		return -1, err
 	}
-	defer f.Close() // f.Close will run when we're finished.
+	defer f.Close()
 
 	return f.ReadAt(data, int64(offset))
 }
