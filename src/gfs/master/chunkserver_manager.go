@@ -89,8 +89,8 @@ func (csm *chunkServerManager) ChooseReReplication(handle gfs.ChunkHandle) (from
 // ChooseServers returns servers to store new chunk
 // called when a new chunk is create
 func (csm *chunkServerManager) ChooseServers(num int) ([]gfs.ServerAddress, error) {
-	csm.Lock()
-	defer csm.Unlock()
+	csm.RLock()
+	defer csm.RUnlock()
 
 	if num > len(csm.servers) {
 		return nil, fmt.Errorf("no enough servers for %v replicas", num)

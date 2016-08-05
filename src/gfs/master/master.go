@@ -269,8 +269,8 @@ func (m *Master) RPCGetReplicas(args gfs.GetReplicasArg, reply *gfs.GetReplicasR
 		return err
 	}
 
-	for _, v := range servers.GetAll() {
-		reply.Locations = append(reply.Locations, v.(gfs.ServerAddress))
+	for _, v := range servers {
+		reply.Locations = append(reply.Locations, v)
 	}
 
 	return nil

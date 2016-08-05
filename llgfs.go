@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 	log "github.com/Sirupsen/logrus"
-    "math/rand"
+	"math/rand"
 	"time"
 
 	"gfs"
@@ -15,21 +15,21 @@ import (
 
 func runTestClient() {
 	c := client.NewClient(gfs.ServerAddress(os.Args[2]))
-    rand.Seed(time.Now().UTC().UnixNano())
+	rand.Seed(time.Now().UTC().UnixNano())
 
 	for {
-        ct := rand.Int63()
+		ct := rand.Int63()
 		filename := gfs.Path(fmt.Sprintf("/haha%v.txt", ct))
-        err := c.Create(filename)
-        if err != nil {
-            log.Warning(err)
-        }
-        for i := 0; i < 100; i++ {
-            _, err =c.Append(filename, []byte("Hello"))
-            if err != nil {
-                log.Warning(err)
-            }
-        }
+		err := c.Create(filename)
+		if err != nil {
+			log.Warning(err)
+		}
+		for i := 0; i < 100; i++ {
+			_, err = c.Append(filename, []byte("Hello"))
+			if err != nil {
+				log.Warning(err)
+			}
+		}
 		time.Sleep(time.Second)
 	}
 }

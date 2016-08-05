@@ -36,10 +36,20 @@ func (c *Client) Create(path gfs.Path) error {
 	return nil
 }
 
-// Create is a client API, deletes a file
+// Delete is a client API, deletes a file
 func (c *Client) Delete(path gfs.Path) error {
 	var reply gfs.DeleteFileReply
 	err := util.Call(c.master, "Master.RPCDeleteFile", gfs.DeleteFileArg{path}, &reply)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// Delete is a client API, deletes a file
+func (c *Client) Rename(source gfs.Path, target gfs.Path) error {
+	var reply gfs.RenameFileReply
+	err := util.Call(c.master, "Master.RPCRenameFile", gfs.RenameFileArg{source, target}, &reply)
 	if err != nil {
 		return err
 	}

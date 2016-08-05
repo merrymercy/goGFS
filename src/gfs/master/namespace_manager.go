@@ -75,8 +75,8 @@ func (nm *namespaceManager) array2tree(array []serialTreeNode, id int) *nsTree {
 }
 
 func (nm *namespaceManager) Deserialize(array []serialTreeNode) error {
-	nm.root.RLock()
-	defer nm.root.RUnlock()
+	nm.root.Lock()
+	defer nm.root.Unlock()
 	nm.root = nm.array2tree(array, len(array)-1)
 	return nil
 }
@@ -215,7 +215,6 @@ func (nm *namespaceManager) Mkdir(p gfs.Path) error {
 // List returns information of all files and directories inside p.
 func (nm *namespaceManager) List(p gfs.Path) ([]gfs.PathInfo, error) {
     log.Info("list ", p)
-
 
     var dir *nsTree
     if p == gfs.Path("/") {

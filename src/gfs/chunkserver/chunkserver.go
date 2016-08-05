@@ -20,16 +20,18 @@ import (
 
 // ChunkServer struct
 type ChunkServer struct {
+    lock       sync.RWMutex
+
 	address    gfs.ServerAddress // chunkserver address
 	master     gfs.ServerAddress // master address
 	serverRoot string            // path to data storage
 	l          net.Listener
 	shutdown   chan struct{}
 
-	dl                     *downloadBuffer                // expiring download buffer
-	pendingLeaseExtensions *util.ArraySet                 // pending lease extension
-	chunk                  map[gfs.ChunkHandle]*chunkInfo // chunk information
-	dead                   bool                           // set to ture if server is shuntdown
+	dl         *downloadBuffer                 // expiring download buffer
+	chunk       map[gfs.ChunkHandle]*chunkInfo // chunk information
+	dead        bool                           // set to ture if server is shuntdown
+	pendingLeaseExtensions *util.ArraySet      // pending lease extension
 }
 
 type Mutation struct {
@@ -156,6 +158,9 @@ type ReportSelfReply struct {
 }
 
 func (cs *ChunkServer) RPCReportSelf(args gfs.ReportSelfArg, reply *gfs.ReportSelfReply) error {
+    cs.lock.RLock()
+    defer cs.lock.RUnlock()
+
 	for handle, ck := range cs.chunk {
 		reply.Chunks = append(reply.Chunks, gfs.PersistentChunkInfo{
 			Handle:   handle,
@@ -170,6 +175,9 @@ func (cs *ChunkServer) RPCReportSelf(args gfs.ReportSelfArg, reply *gfs.ReportSe
 
 // load metadata from disk
 func (cs *ChunkServer) loadMeta() error {
+    cs.lock.Lock()
+    defer cs.lock.Unlock()
+
 	filename := path.Join(cs.serverRoot, MetaFileName)
 	file, err := os.OpenFile(filename, os.O_RDONLY, FilePerm)
 	if err != nil {
@@ -203,6 +211,9 @@ func (cs *ChunkServer) loadMeta() error {
 
 // store metadate to disk
 func (cs *ChunkServer) storeMeta() error {
+    cs.lock.RLock()
+    defer cs.lock.RUnlock()
+
 	filename := path.Join(cs.serverRoot, MetaFileName)
 	file, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE, FilePerm)
 	if err != nil {
@@ -263,6 +274,9 @@ func (cs *ChunkServer) RPCForwardData(args gfs.ForwardDataArg, reply *gfs.Forwar
 func (cs *ChunkServer) RPCCreateChunk(args gfs.CreateChunkArg, reply *gfs.CreateChunkReply) error {
 	log.Infof("Server %v : create chunk %v", cs.address, args.Handle)
 
+    cs.lock.Lock()
+    defer cs.lock.Unlock()
+
 	if _, ok := cs.chunk[args.Handle]; ok {
 		log.Warning("an ignored error on RPCCreateChunk")
 		return nil // TODO : error handle
@@ -273,18 +287,21 @@ func (cs *ChunkServer) RPCCreateChunk(args gfs.CreateChunkArg, reply *gfs.Create
 		length:    0,
 		mutations: make(map[gfs.ChunkVersion]*Mutation),
 	}
-	filename := path.Join(cs.serverRoot, fmt.Sprintf("chunk%v.chk", args.Handle))
-	_, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE, 0644)
-	if err != nil {
-		return err
-	}
+	//filename := path.Join(cs.serverRoot, fmt.Sprintf("chunk%v.chk", args.Handle))
+	//_, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE, 0644)
+	//if err != nil {
+	//	return err
+	//}
 	return nil
 }
 
 // RPCReadChunk is called by client, read chunk data and return
 func (cs *ChunkServer) RPCReadChunk(args gfs.ReadChunkArg, reply *gfs.ReadChunkReply) error {
 	handle := args.Handle
+    cs.lock.RLock()
 	ck, ok := cs.chunk[handle]
+    cs.lock.RUnlock()
+
 	if !ok {
 		return fmt.Errorf("Cannot find chunk %v", handle)
 	}
@@ -321,7 +338,11 @@ func (cs *ChunkServer) RPCWriteChunk(args gfs.WriteChunkArg, reply *gfs.WriteChu
 	}
 
 	handle := args.DataID.Handle
+
+    cs.lock.RLock()
 	ck, ok := cs.chunk[handle]
+    cs.lock.RUnlock()
+
 	if !ok {
 		return fmt.Errorf("Cannot find chunk %v", handle)
 	}
@@ -372,7 +393,9 @@ func (cs *ChunkServer) RPCAppendChunk(args gfs.AppendChunkArg, reply *gfs.Append
 	}
 
 	handle := args.DataID.Handle
+    cs.lock.RLock()
 	ck, ok := cs.chunk[handle]
+    cs.lock.RUnlock()
 	if !ok {
 		return fmt.Errorf("cannot find chunk %v", handle)
 	}
@@ -429,7 +452,9 @@ func (cs *ChunkServer) RPCApplyMutation(args gfs.ApplyMutationArg, reply *gfs.Ap
 	}
 
 	handle := args.DataID.Handle
+    cs.lock.RLock()
 	ck, ok := cs.chunk[handle]
+    cs.lock.RUnlock()
 	if !ok {
 		return fmt.Errorf("Cannot find chunk %v", handle)
 	}
@@ -451,7 +476,10 @@ func (cs *ChunkServer) RPCApplyMutation(args gfs.ApplyMutationArg, reply *gfs.Ap
 // RPCSendCCopy is called by master, send the whole copy to given address
 func (cs *ChunkServer) RPCSendCopy(args gfs.SendCopyArg, reply *gfs.SendCopyReply) error {
 	handle := args.Handle
+
+    cs.lock.RLock()
 	ck, ok := cs.chunk[handle]
+    cs.lock.RUnlock()
 	if !ok {
 		return fmt.Errorf("Cannot find chunk %v", handle)
 	}
@@ -484,7 +512,10 @@ func (cs *ChunkServer) RPCSendCopy(args gfs.SendCopyArg, reply *gfs.SendCopyRepl
 // rewrite the local version to given copy data
 func (cs *ChunkServer) RPCApplyCopy(args gfs.ApplyCopyArg, reply *gfs.ApplyCopyReply) error {
 	handle := args.Handle
+
+    cs.lock.RLock()
 	ck, ok := cs.chunk[handle]
+    cs.lock.RUnlock()
 	if !ok {
 		return fmt.Errorf("Cannot find chunk %v", handle)
 	}
@@ -516,7 +547,9 @@ func (cs *ChunkServer) deleteDownloadedData(id gfs.DataBufferID) ([]byte, error)
 
 // writeChunk writes data at offset to a chunk at disk
 func (cs *ChunkServer) writeChunk(handle gfs.ChunkHandle, version gfs.ChunkVersion, data []byte, offset gfs.Offset, lock bool) error {
+    cs.lock.RLock()
 	ck := cs.chunk[handle]
+    cs.lock.RUnlock()
 
 	newLen := offset + gfs.Offset(len(data))
 	if newLen > ck.length {
@@ -555,7 +588,9 @@ func (cs *ChunkServer) readChunk(handle gfs.ChunkHandle, offset gfs.Offset, data
 
 // apply mutations (write, append, pas) in chunk buffer in proper order according to version number
 func (cs *ChunkServer) doMutation(handle gfs.ChunkHandle) error {
+    cs.lock.RLock()
 	ck := cs.chunk[handle]
+    cs.lock.RUnlock()
 
 	ck.Lock()
 	defer ck.Unlock()
@@ -601,10 +636,10 @@ func (cs *ChunkServer) doMutation(handle gfs.ChunkHandle) error {
 // padChunk pads a chunk to max chunk size.
 // <code>cs.chunk[handle]</code> should be locked in advance
 func (cs *ChunkServer) padChunk(handle gfs.ChunkHandle, version gfs.ChunkVersion) error {
-	ck := cs.chunk[handle]
-	ck.version = version
-	ck.length = gfs.MaxChunkSize
-
+    log.Fatal("padChunk no use!")
+	//ck := cs.chunk[handle]
+	//ck.version = version
+	//ck.length = gfs.MaxChunkSize
 	return nil
 }
 
@@ -632,6 +667,8 @@ func getContents(filename string) (string, error) {
 }
 
 func (cs *ChunkServer) printSelf() error {
+    cs.lock.RLock()
+    cs.lock.RUnlock()
 	log.Info("============ ", cs.address, " ============")
 	if cs.dead {
 		log.Warning("DEAD")

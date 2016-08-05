@@ -1,5 +1,8 @@
 package main
 
+
+// TODO create after shutdown
+
 import (
 	"gfs"
 	"gfs/chunkserver"
@@ -326,23 +329,33 @@ func TestWriteReadBigData(t *testing.T) {
 	errorAll(ch, 4, t)
 }
 
+type Counter struct {
+	sync.Mutex
+	ct int
+}
+
+func (ct *Counter) Next() int {
+	ct.Lock()
+	defer ct.Unlock()
+	ct.ct++
+	return ct.ct - 1
+}
+
 // send all kinds of operations concurrently
 func TestComprehensiveOperation(t *testing.T) {
 	createTick := 300 * time.Millisecond
 
 	done := make(chan struct{})
 
-	var line [][]chan gfs.Path
+	var line []chan gfs.Path
 	for i := 0; i < 3; i++ {
-		line = append(line, make([]chan gfs.Path, N))
-		for j := 0; j < N; j++ {
-			line[i][j] = make(chan gfs.Path, 100*N)
-		}
+		line = append(line, make(chan gfs.Path, N*200))
 	}
 
 	// create
-	var lock0 sync.Mutex
-	ct := 0
+	var wg0 sync.WaitGroup
+	var createCt Counter
+	wg0.Add(2)
 	for i := 0; i < 2; i++ {
 		go func(x int) {
 			ticker := time.Tick(createTick)
@@ -351,60 +364,66 @@ func TestComprehensiveOperation(t *testing.T) {
 				select {
 				case <-done:
 					break loop
-				case p := <-line[1][0]: // get back from append
-					line[0][x] <- p
+				case p := <-line[1]: // get back from append
+					line[0] <- p
 				case <-ticker: // create new file
-					lock0.Lock()
-					p := gfs.Path(fmt.Sprintf("/haha%v.txt", ct))
-					ct++
-					lock0.Unlock()
+					x := createCt.Next()
+					p := gfs.Path(fmt.Sprintf("/haha%v.txt", x))
 
 					//fmt.Println("create ", p)
 					err := c.Create(p)
 					if err != nil {
 						t.Error(err)
 					} else {
-						line[0][x] <- p
+						line[0] <- p
 					}
 				}
 			}
-			close(line[0][x])
+			wg0.Done()
 		}(i)
 	}
 
+	go func() {
+		wg0.Wait()
+		close(line[0])
+	}()
+
 	// append 0, 1, 2, ..., sendCounter
-	var lock1 sync.Mutex
-	sendCounter := 0
+	var wg1 sync.WaitGroup
+	var sendCt Counter
+	wg1.Add(N)
 	for i := 0; i < N; i++ {
 		go func(x int) {
-			for p := range line[0][x%2] {
-				lock1.Lock()
-				tmp := sendCounter
-				sendCounter++
-				lock1.Unlock()
+			for p := range line[0] {
+				x := sendCt.Next()
 
 				//fmt.Println("append ", p, "  ", tmp)
-				_, err := c.Append(p, []byte(fmt.Sprintf("%d,", tmp)))
+				_, err := c.Append(p, []byte(fmt.Sprintf("%10d,", x)))
 				if err != nil {
 					t.Error(err)
 				}
 
-				line[1][0] <- p
-				line[2][x] <- p
+				line[1] <- p
+				line[2] <- p
 			}
-			close(line[2][x])
+			wg1.Done()
 		}(i)
 	}
 
+	go func() {
+		wg1.Wait()
+		close(line[2])
+	}()
+
 	// read and collect numbers
-	var wg sync.WaitGroup
+	var wg2 sync.WaitGroup
 	var lock2 sync.RWMutex
 	receiveData := make(map[int]int)
 	fileOffset := make(map[gfs.Path]int)
+	wg2.Add(N)
 	for i := 0; i < N; i++ {
 		go func(x int) {
-			wg.Add(1)
-			for p := range line[2][x] {
+			for p := range line[2] {
 				lock2.RLock()
 				pos := fileOffset[p]
 				lock2.RUnlock()
@@ -421,7 +440,7 @@ func TestComprehensiveOperation(t *testing.T) {
 
 				lock2.Lock()
 				for _, v := range strings.Split(string(buf), ",") {
-					i, err := strconv.Atoi(v)
+					i, err := strconv.Atoi(strings.TrimSpace(v))
 					if err != nil {
 						t.Error(err)
 					}
@@ -433,26 +452,28 @@ func TestComprehensiveOperation(t *testing.T) {
 				lock2.Unlock()
 				time.Sleep(N * time.Millisecond)
 			}
-			wg.Done()
+			wg2.Done()
 		}(i)
 	}
 
-	// wait
+	// wait to test race contition
 	fmt.Println("###### Continue life for the elder to pass a long time test...")
-	for i := 0; i < 6; i++ {
+	for i := 0; i < 5; i++ {
 		fmt.Print(" +1s ")
 		time.Sleep(time.Second)
 	}
 	fmt.Println("")
 	close(done)
-	wg.Wait()
+	wg2.Wait()
 
 	// check correctness
-	for i := 0; i < sendCounter; i++ {
+	total := sendCt.Next() - 1
+	for i := 0; i < total; i++ {
 		if receiveData[i] < 1 {
 			t.Errorf("error occured in sending data %v", i)
 		}
 	}
+	fmt.Printf("##### You send %v numbers in total\n", total)
 }
 
 /*
