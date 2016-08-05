@@ -70,10 +70,12 @@ func (e Error) Error() string {
 
 // system config
 const (
-	LeaseExpire        = 2 * time.Second //1 * time.Minute
-	HeartbeatInterval  = 200 * time.Millisecond
-	BackgroundInterval = 400 * time.Millisecond //
-	ServerTimeout      = 1 * time.Second
+	LeaseExpire         = 2 * time.Second //1 * time.Minute
+	HeartbeatInterval   = 200 * time.Millisecond
+	ServerCheckInterval = 400 * time.Millisecond //
+    MasterStoreInterval = 30 * time.Second // 30 * time.Minute
+    ServerStoreInterval = 30 * time.Second // 30 * time.Minute
+	ServerTimeout       = 1 * time.Second
 
 	MaxChunkSize  = 512 << 10 // 512KB DEBUG ONLY 64 << 20
 	MaxAppendSize = MaxChunkSize / 4
