@@ -85,7 +85,7 @@ func NewAndServe(address gfs.ServerAddress, serverRoot string) *Master {
 
 			err := m.backgroundActivity()
 			if err != nil {
-				log.Fatal("Background error ", err)
+				log.Warning("[ignored] Background error ", err)
 			}
 		}
 	}()
@@ -177,7 +177,10 @@ func (m *Master) backgroundActivity() error {
 		if err != nil {
 			return err
 		}
-		m.cm.RemoveChunks(handles, v)
+		err = m.cm.RemoveChunks(handles, v)
+		if err != nil {
+			return err
+		}
 	}
 
 	// add replicas for need request
@@ -198,9 +201,9 @@ func (m *Master) backgroundActivity() error {
 	return nil
 }
 
-// perform re-Replication
+// perform re-replication
 func (m *Master) reReplication(handle gfs.ChunkHandle) error {
-	// lock chunk, so master will not grant lease in copy time
+	// chunk are locked, so master will not grant lease during copy time
 	from, to, err := m.csm.ChooseReReplication(handle)
 	if err != nil {
 		return err
@@ -226,19 +229,22 @@ func (m *Master) reReplication(handle gfs.ChunkHandle) error {
 
 // RPCHeartbeat is called by chunkserver to let the master know that a chunkserver is alive
 func (m *Master) RPCHeartbeat(args gfs.HeartbeatArg, reply *gfs.HeartbeatReply) error {
-	rep := m.csm.Heartbeat(args.Address)
-	if rep != nil { // load reported chunks
-		for _, v := range rep {
-			log.Infof("MASTER receive chunk %v", v.Handle)
-			m.cm.RegisterReplica(v.Handle, args.Address)
-			m.csm.AddChunk([]gfs.ServerAddress{args.Address}, v.Handle)
-		}
-	}
+	reply.Report = m.csm.Heartbeat(args.Address)
 
 	for _, handle := range args.LeaseExtensions {
 		m.cm.ExtendLease(handle, args.Address)
 	}
 	return nil
+}
+
+// RPCReportChunks is called by chunkserver to report its chunks to master
+func (m *Master) RPCReportChunks(args gfs.ReportChunksArg, reply *gfs.ReportChunksReply) error {
+    for _, v := range args.Chunks {
+        log.Infof("MASTER receive chunk %v from %v", v.Handle, args.Address)
+        m.cm.RegisterReplica(v.Handle, args.Address)
+        m.csm.AddChunk([]gfs.ServerAddress{args.Address}, v.Handle)
+    }
+    return nil
 }
 
 // RPCGetPrimaryAndSecondaries returns lease holder and secondaries of a chunk.
@@ -313,8 +319,8 @@ func (m *Master) RPCGetFileInfo(args gfs.GetFileInfoArg, reply *gfs.GetFileInfoR
 	if !ok {
 		return fmt.Errorf("File %v does not exist", args.Path)
 	}
-	file.RLock()
-	defer file.RUnlock()
+	file.Lock()
+	defer file.Unlock()
 
 	reply.IsDir = file.isDir
 	reply.Length = file.length
@@ -350,11 +356,16 @@ func (m *Master) RPCGetChunkHandle(args gfs.GetChunkHandleArg, reply *gfs.GetChu
 		reply.Handle, addrs, err = m.cm.CreateChunk(args.Path, addrs)
 		if err != nil {
 			// WARNING
-			log.Warning("[ignored] An ignored error in RPCGetChunkHandle ", err)
-			return nil
+			log.Warning("[ignored] An ignored error in RPCGetChunkHandle when create ", err, " in create chunk ", reply.Handle)
 		}
 
 		m.csm.AddChunk(addrs, reply.Handle)
+
+        if len(addrs) < gfs.DefaultNumReplicas {// error in create chunk
+            m.cm.Lock()
+            m.cm.replicasNeedList = append(m.cm.replicasNeedList, reply.Handle)
+            m.cm.Unlock()
+        }
 	} else {
 		reply.Handle, err = m.cm.GetChunk(args.Path, args.Index)
 	}

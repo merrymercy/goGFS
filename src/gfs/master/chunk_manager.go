@@ -42,8 +42,8 @@ type serialChunkInfo struct {
 }
 
 func (cm *chunkManager) Deserialize(files []serialChunkInfo) error {
-	cm.RLock()
-	defer cm.RUnlock()
+	cm.Lock()
+	defer cm.Unlock()
 
 	now := time.Now()
 	for _, v := range files {
@@ -97,8 +97,8 @@ func newChunkManager() *chunkManager {
 
 // RegisterReplica adds a replica for a chunk
 func (cm *chunkManager) RegisterReplica(handle gfs.ChunkHandle, addr gfs.ServerAddress) error {
-	cm.Lock()
-	defer cm.Unlock()
+	cm.RLock()
+	defer cm.RUnlock()
 
 	chunkinfo, ok := cm.chunk[handle]
 	if !ok {
@@ -154,6 +154,7 @@ func (cm *chunkManager) GetLeaseHolder(handle gfs.ChunkHandle) (*gfs.Lease, erro
 	defer chunkinfo.Unlock()
 
 	if chunkinfo.expire.Before(time.Now()) { // grants a new lease
+		log.Warning(handle, " lease location ", chunkinfo.location.GetAll())
 		chunkinfo.primary = chunkinfo.location.RandomPick().(gfs.ServerAddress)
 		chunkinfo.expire = time.Now().Add(gfs.LeaseExpire)
 	}
@@ -170,8 +171,8 @@ func (cm *chunkManager) GetLeaseHolder(handle gfs.ChunkHandle) (*gfs.Lease, erro
 
 // ExtendLease extends the lease of chunk if the lease holder is primary.
 func (cm *chunkManager) ExtendLease(handle gfs.ChunkHandle, primary gfs.ServerAddress) error {
-	cm.Lock()
-	defer cm.Unlock()
+	cm.RLock()
+	defer cm.RUnlock()
 
 	ck, ok := cm.chunk[handle]
 	if !ok {
@@ -234,18 +235,25 @@ func (cm *chunkManager) RemoveChunks(handles []gfs.ChunkHandle, server gfs.Serve
 	cm.Lock()
 	defer cm.Unlock()
 
+	errList := ""
 	for _, v := range handles {
 		ck := cm.chunk[v]
 		ck.location.Delete(server)
 		ck.expire = time.Now()
 
-		if ck.location.Size() == 0 {
-			return fmt.Errorf("Lose all replicas of chunk %v", v)
-		} else if ck.location.Size() < gfs.MinimumNumReplicas {
+		if ck.location.Size() < gfs.MinimumNumReplicas {
 			cm.replicasNeedList = append(cm.replicasNeedList, v)
+			if ck.location.Size() == 0 {
+				errList += fmt.Sprintf("Lose all replicas of chunk %v;", v)
+			}
 		}
 	}
-	return nil
+
+	if errList == "" {
+		return nil
+	} else {
+		return fmt.Errorf(errList)
+	}
 }
 
 // GetNeedList clears the need list at first (removes the old handles that nolonger need replicas)

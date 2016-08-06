@@ -48,6 +48,7 @@ func (buf *leaseBuffer) Get(handle gfs.ChunkHandle) (*gfs.Lease, error) {
 	defer buf.Unlock()
 	lease, ok := buf.buffer[handle]
 
+	_ = ok
 	if !ok { // ask master to send one
 		var l gfs.GetPrimaryAndSecondariesReply
 		err := util.Call(buf.master, "Master.RPCGetPrimaryAndSecondaries", gfs.GetPrimaryAndSecondariesArg{handle}, &l)

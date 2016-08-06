@@ -30,7 +30,7 @@ type chunkServerInfo struct {
 	chunks        map[gfs.ChunkHandle]bool // set of chunks that the chunkserver has
 }
 
-func (csm *chunkServerManager) Heartbeat(addr gfs.ServerAddress) []gfs.PersistentChunkInfo {
+func (csm *chunkServerManager) Heartbeat(addr gfs.ServerAddress) bool {
 	csm.Lock()
 	defer csm.Unlock()
 
@@ -38,24 +38,17 @@ func (csm *chunkServerManager) Heartbeat(addr gfs.ServerAddress) []gfs.Persisten
 	if !ok {
 		log.Info("New chunk server" + addr)
 		csm.servers[addr] = &chunkServerInfo{time.Now(), make(map[gfs.ChunkHandle]bool)}
-		var r gfs.ReportSelfReply
-		err := util.Call(addr, "ChunkServer.RPCReportSelf", gfs.ReportSelfArg{}, &r)
-		//log.Warning(r.Chunks)
-		if err == nil {
-			return r.Chunks
-		} else {
-			return nil
-		}
+		return true
 	} else {
 		sv.lastHeartbeat = time.Now()
-		return nil
+		return false
 	}
 }
 
 // register a chunk to servers
 func (csm *chunkServerManager) AddChunk(addrs []gfs.ServerAddress, handle gfs.ChunkHandle) {
-	csm.Lock()
-	defer csm.Unlock()
+	csm.RLock()
+	defer csm.RUnlock()
 
 	for _, v := range addrs {
 		csm.servers[v].chunks[handle] = true
@@ -66,8 +59,8 @@ func (csm *chunkServerManager) AddChunk(addrs []gfs.ServerAddress, handle gfs.Ch
 // called when the replicas number of a chunk is less than gfs.MinimumNumReplicas
 // returns two server address, the master will call 'from' to send a copy to 'to'
 func (csm *chunkServerManager) ChooseReReplication(handle gfs.ChunkHandle) (from, to gfs.ServerAddress, err error) {
-	csm.Lock()
-	defer csm.Unlock()
+	csm.RLock()
+	defer csm.RUnlock()
 
 	from = ""
 	to = ""
@@ -89,8 +82,8 @@ func (csm *chunkServerManager) ChooseReReplication(handle gfs.ChunkHandle) (from
 // ChooseServers returns servers to store new chunk
 // called when a new chunk is create
 func (csm *chunkServerManager) ChooseServers(num int) ([]gfs.ServerAddress, error) {
-	csm.Lock()
-	defer csm.Unlock()
+	csm.RLock()
+	defer csm.RUnlock()
 
 	if num > len(csm.servers) {
 		return nil, fmt.Errorf("no enough servers for %v replicas", num)
@@ -114,8 +107,8 @@ func (csm *chunkServerManager) ChooseServers(num int) ([]gfs.ServerAddress, erro
 
 // DetectDeadServers detect disconnected servers according to last heartbeat time
 func (csm *chunkServerManager) DetectDeadServers() []gfs.ServerAddress {
-	csm.Lock()
-	defer csm.Unlock()
+	csm.RLock()
+	defer csm.RUnlock()
 
 	var ret []gfs.ServerAddress
 	now := time.Now()

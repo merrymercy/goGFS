@@ -63,8 +63,8 @@ func (s *ArraySet) GetAll() []interface{} {
 
 // GetAllAndClear returns all elements of the set.
 func (s *ArraySet) GetAllAndClear() []interface{} {
-	s.lock.RLock()
-	defer s.lock.RUnlock()
+	s.lock.Lock()
+	defer s.lock.Unlock()
 	old := s.arr
 	s.arr = make([]interface{}, 0)
 	return old

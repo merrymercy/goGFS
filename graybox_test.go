@@ -66,7 +66,17 @@ func TestMkdirDeleteList(t *testing.T) {
 	ch <- m.RPCCreateFile(gfs.CreateFileArg{"/file2.txt"}, &gfs.CreateFileReply{})
 	ch <- m.RPCCreateFile(gfs.CreateFileArg{"/dir1/file3.txt"}, &gfs.CreateFileReply{})
 	ch <- m.RPCCreateFile(gfs.CreateFileArg{"/dir1/file4.txt"}, &gfs.CreateFileReply{})
-	ch <- m.RPCCreateFile(gfs.CreateFileArg{"/dir2/fiel5.txt"}, &gfs.CreateFileReply{})
+	ch <- m.RPCCreateFile(gfs.CreateFileArg{"/dir2/file5.txt"}, &gfs.CreateFileReply{})
+
+    err := m.RPCCreateFile(gfs.CreateFileArg{"/dir2/file5.txt"}, &gfs.CreateFileReply{})
+    if err == nil {
+		t.Error("the same file has been created twice")
+    }
+
+    err = m.RPCMkdir(gfs.MkdirArg{"/dir1"}, &gfs.MkdirReply{})
+    if err == nil {
+		t.Error("the same dirctory has been created twice")
+    }
 
 	todelete := make(map[string]bool)
 	todelete["dir1"] = true
@@ -204,7 +214,7 @@ func TestAppendChunk(t *testing.T) {
 	ch <- m.RPCGetChunkHandle(gfs.GetChunkHandleArg{p, 0}, &r1)
 	expected := make(map[int][]byte)
 	for i := 0; i < N; i++ {
-		expected[i] = []byte(fmt.Sprintf("%2d", i))
+		expected[i] = []byte(fmt.Sprintf("%3d", i))
 	}
 
 	var wg sync.WaitGroup
@@ -218,13 +228,13 @@ func TestAppendChunk(t *testing.T) {
 	}
 	wg.Wait()
 
-	checkReplicas(r1.Handle, N*2, t)
+	checkReplicas(r1.Handle, N*3, t)
 
 	for x := 0; x < N; x++ {
-		buf := make([]byte, 2)
-		n, err := c.ReadChunk(r1.Handle, gfs.Offset(x*2), buf)
+		buf := make([]byte, 3)
+		n, err := c.ReadChunk(r1.Handle, gfs.Offset(x*3), buf)
 		ch <- err
-		if n != 2 {
+		if n != 3 {
 			t.Error("should read exactly 2 bytes but", n, "instead")
 		}
 		key := -1
@@ -240,9 +250,11 @@ func TestAppendChunk(t *testing.T) {
 			delete(expected, key)
 		}
 	}
+
 	if len(expected) != 0 {
 		t.Error("incorrect data")
 	}
+
 	errorAll(ch, 2*N+2, t)
 }
 
@@ -326,23 +338,54 @@ func TestWriteReadBigData(t *testing.T) {
 	errorAll(ch, 4, t)
 }
 
-// send all kinds of operations concurrently
+type Counter struct {
+	sync.Mutex
+	ct int
+}
+
+func (ct *Counter) Next() int {
+	ct.Lock()
+	defer ct.Unlock()
+	ct.ct++
+	return ct.ct - 1
+}
+
+// a concurrent producer-consumer number collector for testing race contiditon
 func TestComprehensiveOperation(t *testing.T) {
 	createTick := 300 * time.Millisecond
 
 	done := make(chan struct{})
 
-	var line [][]chan gfs.Path
+	var line []chan gfs.Path
 	for i := 0; i < 3; i++ {
-		line = append(line, make([]chan gfs.Path, N))
-		for j := 0; j < N; j++ {
-			line[i][j] = make(chan gfs.Path, 100*N)
-		}
+		line = append(line, make(chan gfs.Path, N*200))
 	}
 
+    // Hard !!
+    go func() {
+        return
+        i := 1
+        cs[i-1].Shutdown()
+        time.Sleep(gfs.ServerTimeout + gfs.LeaseExpire)
+        for {
+            select {
+            case <-done:
+                return
+            default:
+            }
+            j := (i - 1 + csNum) % csNum
+			jj := strconv.Itoa(j)
+            cs[i].Shutdown()
+			cs[j] = chunkserver.NewAndServe(csAdd[j], mAdd, path.Join(root, "cs" + jj))
+            i = (i + 1) % csNum
+            time.Sleep(gfs.ServerTimeout + gfs.LeaseExpire)
+        }
+    }()
+
 	// create
-	var lock0 sync.Mutex
-	ct := 0
+	var wg0 sync.WaitGroup
+	var createCt Counter
+	wg0.Add(2)
 	for i := 0; i < 2; i++ {
 		go func(x int) {
 			ticker := time.Tick(createTick)
@@ -351,60 +394,66 @@ func TestComprehensiveOperation(t *testing.T) {
 				select {
 				case <-done:
 					break loop
-				case p := <-line[1][0]: // get back from append
-					line[0][x] <- p
+				case p := <-line[1]: // get back from append
+					line[0] <- p
 				case <-ticker: // create new file
-					lock0.Lock()
-					p := gfs.Path(fmt.Sprintf("/haha%v.txt", ct))
-					ct++
-					lock0.Unlock()
+					x := createCt.Next()
+					p := gfs.Path(fmt.Sprintf("/haha%v.txt", x))
 
 					//fmt.Println("create ", p)
 					err := c.Create(p)
 					if err != nil {
 						t.Error(err)
 					} else {
-						line[0][x] <- p
+						line[0] <- p
 					}
 				}
 			}
-			close(line[0][x])
+			wg0.Done()
 		}(i)
 	}
 
+	go func() {
+		wg0.Wait()
+		close(line[0])
+	}()
+
 	// append 0, 1, 2, ..., sendCounter
-	var lock1 sync.Mutex
-	sendCounter := 0
+	var wg1 sync.WaitGroup
+	var sendCt Counter
+	wg1.Add(N)
 	for i := 0; i < N; i++ {
 		go func(x int) {
-			for p := range line[0][x%2] {
-				lock1.Lock()
-				tmp := sendCounter
-				sendCounter++
-				lock1.Unlock()
+			for p := range line[0] {
+				x := sendCt.Next()
 
 				//fmt.Println("append ", p, "  ", tmp)
-				_, err := c.Append(p, []byte(fmt.Sprintf("%d,", tmp)))
+				_, err := c.Append(p, []byte(fmt.Sprintf("%10d,", x)))
 				if err != nil {
 					t.Error(err)
 				}
 
-				line[1][0] <- p
-				line[2][x] <- p
+				line[1] <- p
+				line[2] <- p
 			}
-			close(line[2][x])
+			wg1.Done()
 		}(i)
 	}
 
+	go func() {
+		wg1.Wait()
+		close(line[2])
+	}()
+
 	// read and collect numbers
-	var wg sync.WaitGroup
+	var wg2 sync.WaitGroup
 	var lock2 sync.RWMutex
 	receiveData := make(map[int]int)
 	fileOffset := make(map[gfs.Path]int)
+	wg2.Add(N)
 	for i := 0; i < N; i++ {
 		go func(x int) {
-			wg.Add(1)
-			for p := range line[2][x] {
+			for p := range line[2] {
 				lock2.RLock()
 				pos := fileOffset[p]
 				lock2.RUnlock()
@@ -421,7 +470,7 @@ func TestComprehensiveOperation(t *testing.T) {
 
 				lock2.Lock()
 				for _, v := range strings.Split(string(buf), ",") {
-					i, err := strconv.Atoi(v)
+					i, err := strconv.Atoi(strings.TrimSpace(v))
 					if err != nil {
 						t.Error(err)
 					}
@@ -433,26 +482,28 @@ func TestComprehensiveOperation(t *testing.T) {
 				lock2.Unlock()
 				time.Sleep(N * time.Millisecond)
 			}
-			wg.Done()
+			wg2.Done()
 		}(i)
 	}
 
-	// wait
+	// wait to test race contition
 	fmt.Println("###### Continue life for the elder to pass a long time test...")
-	for i := 0; i < 6; i++ {
+	for i := 0; i < 5; i++ {
 		fmt.Print(" +1s ")
 		time.Sleep(time.Second)
 	}
 	fmt.Println("")
 	close(done)
-	wg.Wait()
+	wg2.Wait()
 
 	// check correctness
-	for i := 0; i < sendCounter; i++ {
+	total := sendCt.Next() - 1
+	for i := 0; i < total; i++ {
 		if receiveData[i] < 1 {
 			t.Errorf("error occured in sending data %v", i)
 		}
 	}
+	fmt.Printf("##### You send %v numbers in total\n", total)
 }
 
 /*
@@ -472,7 +523,7 @@ func TestShutdownInAppend(t *testing.T) {
 		todelete[i] = []byte(fmt.Sprintf("%2d", i))
 	}
 
-	// get primary and a secondary
+	// get two replica locations
 	var r1 gfs.GetChunkHandleReply
 	ch <- m.RPCGetChunkHandle(gfs.GetChunkHandleArg{p, 0}, &r1)
 	var l gfs.GetReplicasReply
@@ -486,7 +537,7 @@ func TestShutdownInAppend(t *testing.T) {
 	}
 
 	time.Sleep(N * time.Millisecond)
-	// choose a primary and a secondary to shutdown during appending
+	// choose two servers to shutdown during appending
 	for i, v := range cs {
 		if csAdd[i] == l.Locations[0] || csAdd[i] == l.Locations[1] {
 			v.Shutdown()
@@ -533,7 +584,7 @@ func TestShutdownInAppend(t *testing.T) {
 	}
 }
 
-// Shutdown all servers in turns. You should perform re-Replication well
+// Shutdown all servers in turns. You should perform re-replication well
 func TestReReplication(t *testing.T) {
 	p := gfs.Path("/re-replication.txt")
 
@@ -582,10 +633,46 @@ func TestReReplication(t *testing.T) {
 	errorAll(ch, 2, t)
 }
 
+// some file operations to check if the server is still working
+func checkWork(p gfs.Path, msg []byte, t *testing.T) {
+    ch := make(chan error, 6)
+
+    // append again to confirm all information about this chunk has been reloaded properly
+    offset , err := c.Append(p, msg)
+	ch <- err
+
+    // read and check data
+	buf := make([]byte, len(msg) * 2)
+    // read at defined region
+	_, err = c.Read(p, offset - gfs.Offset(len(msg)), buf)
+	ch <- err
+
+	msg = append(msg, msg...)
+	if !reflect.DeepEqual(buf, msg) {
+		t.Errorf("[check 1]read wrong data \"%v\", expect \"%v\"", string(buf), string(msg))
+	}
+
+    // other file operation
+    ch <- c.Mkdir (gfs.Path("/" + string(msg)))
+    newfile := gfs.Path("/" + string(msg) + "/" +  string(msg) + ".txt")
+    ch <- c.Create(newfile)
+    ch <- c.Write (newfile, 4, msg)
+
+    // read and check data again
+	buf = make([]byte, len(msg))
+	_, err = c.Read(p, 0, buf)
+	ch <- err
+	if !reflect.DeepEqual(buf, msg) {
+		t.Errorf("[check 2]read wrong data \"%v\", expect \"%v\"", string(buf), string(msg))
+	}
+
+    errorAll(ch, 6, t)
+}
+
 // Shutdown all chunk servers. You must store the meta data of chunkserver persistently
 func TestPersistentChunkServer(t *testing.T) {
 	p := gfs.Path("/persistent-chunkserver.txt")
-	msg := []byte("Don't Lose Me.")
+	msg := []byte("Don't Lose Me. ")
 
 	ch := make(chan error, 4)
 	ch <- c.Create(p)
@@ -606,29 +693,19 @@ func TestPersistentChunkServer(t *testing.T) {
 		cs[i] = chunkserver.NewAndServe(csAdd[i], mAdd, path.Join(root, "cs"+ii))
 	}
 
-	fmt.Println("##### Waiting for Chunk Servers to report their chunks to master...")
+	fmt.Println("###### Waiting for Chunk Servers to report their chunks to master...")
 	time.Sleep(2 * gfs.ServerTimeout)
 
-	// append again to confirm all information about chunk has been reloaded properly
-	_, err = c.Append(p, msg)
-	ch <- err
+	// check recovery
+    checkWork(p, msg, t)
 
-	msg = append(msg, msg...)
-	buf := make([]byte, len(msg))
-	_, err = c.Read(p, 0, buf)
-	ch <- err
-
-	if !reflect.DeepEqual(buf, msg) {
-		t.Errorf("read wrong data \"%v\", expect \"%v\"", string(buf), string(msg))
-	}
-
-	errorAll(ch, 4, t)
+	errorAll(ch, 2, t)
 }
 
 // Shutdown master. You must store the meta data of master persistently
 func TestPersistentMaster(t *testing.T) {
 	p := gfs.Path("/persistent/master.txt")
-	msg := []byte("Don't Lose Yourself.")
+	msg := []byte("Don't Lose Yourself. ")
 
 	ch := make(chan error, 5)
 	ch <- c.Mkdir("/persistent")
@@ -646,20 +723,51 @@ func TestPersistentMaster(t *testing.T) {
 	m = master.NewAndServe(mAdd, path.Join(root, "m"))
 	time.Sleep(2 * gfs.ServerTimeout)
 
-	//append again to confirm all information about chunk has been reloaded properly
-	_, err = c.Append(p, msg)
-	ch <- err
+	// check recovery
+    checkWork(p, msg, t)
 
-	msg = append(msg, msg...)
-	buf := make([]byte, len(msg))
-	_, err = c.Read(p, 0, buf)
-	ch <- err
+	errorAll(ch, 3, t)
+}
 
-	if !reflect.DeepEqual(buf, msg) {
-		t.Errorf("read wrong data \"%v\", expect \"%v\"", string(buf), string(msg))
+// delete all files in two chunkservers ...
+func TestDiskError(t *testing.T) {
+    return
+	p := gfs.Path("/virus.die")
+	msg := []byte("fucking disk!")
+
+	ch := make(chan error, 5)
+	ch <- c.Create(p)
+
+    _, err := c.Append(p, msg)
+    ch <- err
+
+	// get replica locations
+	var r1 gfs.GetChunkHandleReply
+	ch <- m.RPCGetChunkHandle(gfs.GetChunkHandleArg{p, 0}, &r1)
+	var l gfs.GetReplicasReply
+	ch <- m.RPCGetReplicas(gfs.GetReplicasArg{r1.Handle}, &l)
+
+    fmt.Println("###### Destory two chunkserver's diskes")
+	// destory two server's disk
+	for i, _ := range cs {
+		if csAdd[i] == l.Locations[0] || csAdd[i] == l.Locations[1] {
+            ii := strconv.Itoa(i)
+            os.RemoveAll(path.Join(root, "cs" + ii))
+		}
 	}
+    fmt.Println("###### Waiting for recovery")
+    time.Sleep(gfs.ServerTimeout)
 
-	errorAll(ch, 5, t)
+    _, err = c.Append(p, msg)
+    ch <- err
+
+    time.Sleep(gfs.ServerTimeout)
+
+    // TODO: check re-replication
+    // check recovery
+    checkWork(p, msg, t)
+
+    errorAll(ch, 5, t)
 }
 
 func TestMain(tm *testing.M) {
@@ -670,7 +778,10 @@ func TestMain(tm *testing.M) {
 		log.Fatal("cannot create temporary directory: ", err)
 	}
 
-	log.SetLevel(log.FatalLevel)
+    if os.Args[len(os.Args) - 1] == "-s" {
+        os.Args = os.Args[:len(os.Args)-1]
+        log.SetLevel(log.FatalLevel)
+    }
 
 	// run master
 	os.Mkdir(path.Join(root, "m"), 0755)
@@ -683,7 +794,7 @@ func TestMain(tm *testing.M) {
 		ii := strconv.Itoa(i)
 		os.Mkdir(path.Join(root, "cs"+ii), 0755)
 		csAdd[i] = gfs.ServerAddress(fmt.Sprintf(":%v", 10000+i))
-		cs[i] = chunkserver.NewAndServe(csAdd[i], mAdd, path.Join(root, "cs"+ii))
+		cs[i] = chunkserver.NewAndServe(csAdd[i], mAdd, path.Join(root, "cs" + ii))
 	}
 
 	// init client

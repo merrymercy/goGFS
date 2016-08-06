@@ -68,6 +68,10 @@ func (e Error) Error() string {
 	return e.Err
 }
 
+var (
+    Debug int
+)
+
 // system config
 const (
 	LeaseExpire        = 2 * time.Second //1 * time.Minute

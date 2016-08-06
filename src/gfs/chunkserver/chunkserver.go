@@ -132,14 +132,22 @@ func NewAndServe(addr, masterAddr gfs.ServerAddress, serverRoot string) *ChunkSe
 				Address:         addr,
 				LeaseExtensions: le,
 			}
-			if err := util.Call(cs.master, "Master.RPCHeartbeat", args, nil); err != nil {
+            var r gfs.HeartbeatReply
+			if err := util.Call(cs.master, "Master.RPCHeartbeat", args, &r); err != nil {
 				// TODO
 				log.Info("heartbeat rpc error ", err)
 				//log.Exit(1)
 			}
 
+            if r.Report {
+                err := cs.reportSelf()
+                if err != nil {
+                    log.Warning(err)
+                }
+            }
+
 			time.Sleep(gfs.HeartbeatInterval)
-			log.Info(cs.address, " Beat")
+			//log.Info(cs.address, " Beat")
 		}
 	}()
 
@@ -148,16 +156,13 @@ func NewAndServe(addr, masterAddr gfs.ServerAddress, serverRoot string) *ChunkSe
 	return cs
 }
 
-type ReportSelfReply struct {
-	Handle   gfs.ChunkHandle
-	Version  gfs.ChunkVersion
-	Length   int64
-	Checksum gfs.Checksum
-}
-
-func (cs *ChunkServer) RPCReportSelf(args gfs.ReportSelfArg, reply *gfs.ReportSelfReply) error {
+// report chunks
+func (cs *ChunkServer) reportSelf() error {
+    var arg gfs.ReportChunksArg
+    arg.Address = cs.address
 	for handle, ck := range cs.chunk {
-		reply.Chunks = append(reply.Chunks, gfs.PersistentChunkInfo{
+        log.Info(cs.address, " report ", handle)
+		arg.Chunks = append(arg.Chunks, gfs.PersistentChunkInfo{
 			Handle:   handle,
 			Version:  ck.version,
 			Length:   ck.length,
@@ -165,7 +170,8 @@ func (cs *ChunkServer) RPCReportSelf(args gfs.ReportSelfArg, reply *gfs.ReportSe
 		})
 	}
 
-	return nil
+    err := util.Call(cs.master, "Master.RPCReportChunks", arg, nil)
+	return err
 }
 
 // load metadata from disk
@@ -186,8 +192,7 @@ func (cs *ChunkServer) loadMeta() error {
 
 	log.Infof("Server %v : load metadata len: %v", cs.address, len(metas))
 
-	// TODO : add check
-	// add chunks to server
+	// load into memory
 	for _, ck := range metas {
 		log.Infof("Server %v restore %v version: %v length: %v", cs.address, ck.Handle, ck.Version, ck.Length)
 		cs.chunk[ck.Handle] = &chunkInfo{
@@ -240,7 +245,6 @@ func (cs *ChunkServer) Shutdown() {
 }
 
 // RPCForwardData is called by another replica who sends data to the current memory buffer.
-// TODO: This should be replaced by a chain forwarding.
 func (cs *ChunkServer) RPCForwardData(args gfs.ForwardDataArg, reply *gfs.ForwardDataReply) error {
 	if _, ok := cs.dl.Get(args.DataID); ok {
 		return fmt.Errorf("Data %v already exists", args.DataID)
@@ -291,7 +295,6 @@ func (cs *ChunkServer) RPCReadChunk(args gfs.ReadChunkArg, reply *gfs.ReadChunkR
 
 	// read from disk
 	var err error
-
 	reply.Data = make([]byte, args.Length)
 	ck.RLock()
 	reply.Length, err = cs.readChunk(handle, args.Offset, reply.Data)
@@ -326,27 +329,33 @@ func (cs *ChunkServer) RPCWriteChunk(args gfs.WriteChunkArg, reply *gfs.WriteChu
 		return fmt.Errorf("Cannot find chunk %v", handle)
 	}
 
-	ck.Lock()
-	// assign a new version
-	if newLen > ck.length {
-		ck.length = newLen
-	}
-	version := ck.nextVersion()
-	if _, ok := ck.mutations[version]; ok {
-		return fmt.Errorf("3 Duplicated mutation version %v for chunk %v", version, handle)
-	}
-	ck.mutations[version] = &Mutation{gfs.MutationWrite, version, data, args.Offset}
-	ck.Unlock()
+	err = func() error {
+		ck.Lock()
+		defer ck.Unlock()
+		// assign a new version
+		if newLen > ck.length {
+			ck.length = newLen
+		}
+		version := ck.nextVersion()
+		if _, ok := ck.mutations[version]; ok {
+			return fmt.Errorf("Duplicated mutation version %v for chunk %v", version, handle)
+		}
+		ck.mutations[version] = &Mutation{gfs.MutationWrite, version, data, args.Offset}
 
-	// apply to local
-	err = cs.doMutation(handle)
-	if err != nil {
-		return err
-	}
+		// apply to local
+		err = cs.doMutation(handle)
+		if err != nil {
+			return err
+		}
 
-	// call secondaries
-	callArgs := gfs.ApplyMutationArg{gfs.MutationWrite, version, args.DataID, args.Offset}
-	err = util.CallAll(args.Secondaries, "ChunkServer.RPCApplyMutation", callArgs)
+		// call secondaries
+		callArgs := gfs.ApplyMutationArg{gfs.MutationWrite, version, args.DataID, args.Offset}
+		err = util.CallAll(args.Secondaries, "ChunkServer.RPCApplyMutation", callArgs)
+		if err != nil {
+			return err
+		}
+		return nil
+	}()
 	if err != nil {
 		return err
 	}
@@ -379,38 +388,45 @@ func (cs *ChunkServer) RPCAppendChunk(args gfs.AppendChunkArg, reply *gfs.Append
 
 	var mtype gfs.MutationType
 
-	ck.Lock()
-	newLen := ck.length + gfs.Offset(len(data))
-	offset := ck.length
-	if newLen > gfs.MaxChunkSize {
-		mtype = gfs.MutationPad
-		ck.length = gfs.MaxChunkSize
-		reply.ErrorCode = gfs.AppendExceedChunkSize
-	} else {
-		mtype = gfs.MutationAppend
-		ck.length = newLen
-	}
-	reply.Offset = offset
+	err = func() error {
+		ck.Lock()
+		defer ck.Unlock()
+		newLen := ck.length + gfs.Offset(len(data))
+		offset := ck.length
+		if newLen > gfs.MaxChunkSize {
+			mtype = gfs.MutationPad
+			ck.length = gfs.MaxChunkSize
+			reply.ErrorCode = gfs.AppendExceedChunkSize
+		} else {
+			mtype = gfs.MutationAppend
+			ck.length = newLen
+		}
+		reply.Offset = offset
 
-	// allocate a new version
-	version := ck.nextVersion()
-	if _, ok := ck.mutations[version]; ok {
-		return fmt.Errorf("Duplicated mutation version %v for chunk %v", version, handle)
-	}
-	ck.mutations[version] = &Mutation{mtype, version, data, offset}
-	ck.Unlock()
+		// allocate a new version
+		version := ck.nextVersion()
+		if _, ok := ck.mutations[version]; ok {
+			return fmt.Errorf("Duplicated mutation version %v for chunk %v", version, handle)
+		}
+		ck.mutations[version] = &Mutation{mtype, version, data, offset}
 
-	// log.Infof("Primary %v : append chunk %v version %v", cs.address, args.DataID.Handle, version)
+		// log.Infof("Primary %v : append chunk %v version %v", cs.address, args.DataID.Handle, version)
 
-	// apply to local
-	err = cs.doMutation(handle)
-	if err != nil {
-		return err
-	}
+		// apply to local
+		err = cs.doMutation(handle)
+		if err != nil {
+			return err
+		}
 
-	// call secondaries
-	callArgs := gfs.ApplyMutationArg{mtype, version, args.DataID, offset}
-	err = util.CallAll(args.Secondaries, "ChunkServer.RPCApplyMutation", callArgs)
+		// call secondaries
+		callArgs := gfs.ApplyMutationArg{mtype, version, args.DataID, offset}
+		err = util.CallAll(args.Secondaries, "ChunkServer.RPCApplyMutation", callArgs)
+		if err != nil {
+			return err
+		}
+		return nil
+	}()
+
 	if err != nil {
 		return err
 	}
@@ -437,14 +453,17 @@ func (cs *ChunkServer) RPCApplyMutation(args gfs.ApplyMutationArg, reply *gfs.Ap
 	//log.Infof("Server %v : get mutation to chunk %v version %v", cs.address, handle, args.Version)
 
 	mutation := Mutation{args.Mtype, args.Version, data, args.Offset}
-	ck.Lock()
-	if _, ok := ck.mutations[args.Version]; ok {
-		return fmt.Errorf("Duplicated mutation version %v for chunk %v", args.Version, handle)
-	}
-	ck.mutations[args.Version] = &mutation
-	ck.Unlock()
+	err = func() error {
+		ck.Lock()
+		defer ck.Unlock()
+		if _, ok := ck.mutations[args.Version]; ok {
+			return fmt.Errorf("Duplicated mutation version %v for chunk %v", args.Version, handle)
+		}
+		ck.mutations[args.Version] = &mutation
+		err = cs.doMutation(handle)
+		return err
+	}()
 
-	err = cs.doMutation(handle)
 	return err
 }
 
@@ -524,7 +543,7 @@ func (cs *ChunkServer) writeChunk(handle gfs.ChunkHandle, version gfs.ChunkVersi
 	}
 	ck.version = version
 
-	log.Infof("Server %v : write to chunk %v version %v", cs.address, handle, version)
+	//log.Infof("Server %v : write to chunk %v version %v", cs.address, handle, version)
 	filename := path.Join(cs.serverRoot, fmt.Sprintf("chunk%v.chk", handle))
 	file, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE, FilePerm)
 	if err != nil {
@@ -557,8 +576,6 @@ func (cs *ChunkServer) readChunk(handle gfs.ChunkHandle, offset gfs.Offset, data
 func (cs *ChunkServer) doMutation(handle gfs.ChunkHandle) error {
 	ck := cs.chunk[handle]
 
-	ck.Lock()
-	defer ck.Unlock()
 	for {
 		v, ok := ck.mutations[ck.version+1]
 
@@ -631,7 +648,7 @@ func getContents(filename string) (string, error) {
 	return string(result), nil // f will be closed if we return here.
 }
 
-func (cs *ChunkServer) printSelf() error {
+func (cs *ChunkServer) PrintSelf(no1 gfs.Nouse, no2 *gfs.Nouse) error {
 	log.Info("============ ", cs.address, " ============")
 	if cs.dead {
 		log.Warning("DEAD")

@@ -14,12 +14,6 @@ import (
 //    ErrorCode ErrorCode
 //}
 
-type ReportSelfArg struct {
-}
-type ReportSelfReply struct {
-	Chunks []PersistentChunkInfo
-}
-
 type ForwardDataArg struct {
 	DataID     DataBufferID
 	Data       []byte
@@ -108,7 +102,15 @@ type HeartbeatArg struct {
 	Address         ServerAddress // chunkserver address
 	LeaseExtensions []ChunkHandle // leases to be extended
 }
-type HeartbeatReply struct{}
+type HeartbeatReply struct {
+	Report bool
+}
+
+type ReportChunksArg struct {
+	Address ServerAddress // chunkserver address
+	Chunks  []PersistentChunkInfo
+}
+type ReportChunksReply struct{}
 
 type GetPrimaryAndSecondariesArg struct {
 	Handle ChunkHandle
