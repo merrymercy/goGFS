@@ -52,7 +52,7 @@ type ErrorCode int
 const (
 	Success = iota
 	UnknownError
-    Timeout
+	Timeout
 	AppendExceedChunkSize
 	WriteExceedChunkSize
 	ReadEOF
@@ -70,31 +70,31 @@ func (e Error) Error() string {
 }
 
 var (
-    Debug int
+	Debug int
 )
 
 // system config
 const (
-    // chunk
-    LeaseExpire          = 2 * time.Second //1 * time.Minute
-	DefaultNumReplicas   = 3
-	MinimumNumReplicas   = 2
-	MaxChunkSize         = 512 << 10 // 512KB DEBUG ONLY 64 << 20
-	MaxAppendSize        = MaxChunkSize / 4
+	// chunk
+	LeaseExpire        = 2 * time.Second //1 * time.Minute
+	DefaultNumReplicas = 3
+	MinimumNumReplicas = 2
+	MaxChunkSize       = 512 << 10 // 512KB DEBUG ONLY 64 << 20
+	MaxAppendSize      = MaxChunkSize / 4
 
-    // master
-	HeartbeatInterval    = 200 * time.Millisecond
-	ServerCheckInterval  = 400 * time.Millisecond //
-    MasterStoreInterval  = 30 * time.Second // 30 * time.Minute
+	// master
+	HeartbeatInterval   = 200 * time.Millisecond
+	ServerCheckInterval = 400 * time.Millisecond //
+	MasterStoreInterval = 30 * time.Second       // 30 * time.Minute
 
-    // chunk server
+	// chunk server
 	ServerTimeout        = 1 * time.Second
-    MutationWaitTimeout  = 4 * time.Second
-    ServerStoreInterval  = 30 * time.Second // 30 * time.Minute
+	MutationWaitTimeout  = 4 * time.Second
+	ServerStoreInterval  = 30 * time.Second // 30 * time.Minute
 	DownloadBufferExpire = 2 * time.Minute
 	DownloadBufferTick   = 10 * time.Second
 
-    // client
-    ClientTryTimeout     = LeaseExpire + ServerTimeout + 100 * time.Millisecond
-	LeaseBufferTick      = 500 * time.Millisecond
+	// client
+	ClientTryTimeout = 2*LeaseExpire + 2*ServerTimeout
+	LeaseBufferTick  = 500 * time.Millisecond
 )

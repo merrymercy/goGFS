@@ -68,15 +68,15 @@ func TestMkdirDeleteList(t *testing.T) {
 	ch <- m.RPCCreateFile(gfs.CreateFileArg{"/dir1/file4.txt"}, &gfs.CreateFileReply{})
 	ch <- m.RPCCreateFile(gfs.CreateFileArg{"/dir2/file5.txt"}, &gfs.CreateFileReply{})
 
-    err := m.RPCCreateFile(gfs.CreateFileArg{"/dir2/file5.txt"}, &gfs.CreateFileReply{})
-    if err == nil {
+	err := m.RPCCreateFile(gfs.CreateFileArg{"/dir2/file5.txt"}, &gfs.CreateFileReply{})
+	if err == nil {
 		t.Error("the same file has been created twice")
-    }
+	}
 
-    err = m.RPCMkdir(gfs.MkdirArg{"/dir1"}, &gfs.MkdirReply{})
-    if err == nil {
+	err = m.RPCMkdir(gfs.MkdirArg{"/dir1"}, &gfs.MkdirReply{})
+	if err == nil {
 		t.Error("the same dirctory has been created twice")
-    }
+	}
 
 	todelete := make(map[string]bool)
 	todelete["dir1"] = true
@@ -255,10 +255,10 @@ func TestAppendChunk(t *testing.T) {
 		t.Error("incorrect data")
 	}
 
-    for _, v := range cs {
-        var nouse gfs.Nouse
-        v.PrintSelf(nouse, &nouse)
-    }
+	for _, v := range cs {
+		var nouse gfs.Nouse
+		v.PrintSelf(nouse, &nouse)
+	}
 
 	errorAll(ch, 2*N+2, t)
 }
@@ -366,26 +366,26 @@ func TestComprehensiveOperation(t *testing.T) {
 		line = append(line, make(chan gfs.Path, N*200))
 	}
 
-    // Hard !!
-    go func() {
-        return
-        i := 1
-        cs[i-1].Shutdown()
-        time.Sleep(gfs.ServerTimeout + gfs.LeaseExpire)
-        for {
-            select {
-            case <-done:
-                return
-            default:
-            }
-            j := (i - 1 + csNum) % csNum
+	// Hard !!
+	go func() {
+		return
+		i := 1
+		cs[i-1].Shutdown()
+		time.Sleep(gfs.ServerTimeout + gfs.LeaseExpire)
+		for {
+			select {
+			case <-done:
+				return
+			default:
+			}
+			j := (i - 1 + csNum) % csNum
 			jj := strconv.Itoa(j)
-            cs[i].Shutdown()
-			cs[j] = chunkserver.NewAndServe(csAdd[j], mAdd, path.Join(root, "cs" + jj))
-            i = (i + 1) % csNum
-            time.Sleep(gfs.ServerTimeout + gfs.LeaseExpire)
-        }
-    }()
+			cs[i].Shutdown()
+			cs[j] = chunkserver.NewAndServe(csAdd[j], mAdd, path.Join(root, "cs"+jj))
+			i = (i + 1) % csNum
+			time.Sleep(gfs.ServerTimeout + gfs.LeaseExpire)
+		}
+	}()
 
 	// create
 	var wg0 sync.WaitGroup
@@ -640,16 +640,16 @@ func TestReReplication(t *testing.T) {
 
 // some file operations to check if the server is still working
 func checkWork(p gfs.Path, msg []byte, t *testing.T) {
-    ch := make(chan error, 6)
+	ch := make(chan error, 6)
 
-    // append again to confirm all information about this chunk has been reloaded properly
-    offset , err := c.Append(p, msg)
+	// append again to confirm all information about this chunk has been reloaded properly
+	offset, err := c.Append(p, msg)
 	ch <- err
 
-    // read and check data
-	buf := make([]byte, len(msg) * 2)
-    // read at defined region
-	_, err = c.Read(p, offset - gfs.Offset(len(msg)), buf)
+	// read and check data
+	buf := make([]byte, len(msg)*2)
+	// read at defined region
+	_, err = c.Read(p, offset-gfs.Offset(len(msg)), buf)
 	ch <- err
 
 	msg = append(msg, msg...)
@@ -657,13 +657,13 @@ func checkWork(p gfs.Path, msg []byte, t *testing.T) {
 		t.Errorf("[check 1]read wrong data \"%v\", expect \"%v\"", string(buf), string(msg))
 	}
 
-    // other file operation
-    ch <- c.Mkdir (gfs.Path("/" + string(msg)))
-    newfile := gfs.Path("/" + string(msg) + "/" +  string(msg) + ".txt")
-    ch <- c.Create(newfile)
-    ch <- c.Write (newfile, 4, msg)
+	// other file operation
+	ch <- c.Mkdir(gfs.Path("/" + string(msg)))
+	newfile := gfs.Path("/" + string(msg) + "/" + string(msg) + ".txt")
+	ch <- c.Create(newfile)
+	ch <- c.Write(newfile, 4, msg)
 
-    // read and check data again
+	// read and check data again
 	buf = make([]byte, len(msg))
 	_, err = c.Read(p, 0, buf)
 	ch <- err
@@ -671,7 +671,7 @@ func checkWork(p gfs.Path, msg []byte, t *testing.T) {
 		t.Errorf("[check 2]read wrong data \"%v\", expect \"%v\"", string(buf), string(msg))
 	}
 
-    errorAll(ch, 6, t)
+	errorAll(ch, 6, t)
 }
 
 // Shutdown all chunk servers. You must store the meta data of chunkserver persistently
@@ -690,7 +690,7 @@ func TestPersistentChunkServer(t *testing.T) {
 	for _, v := range cs {
 		v.Shutdown()
 	}
-	time.Sleep(3 * gfs.ServerTimeout)
+	time.Sleep(2*gfs.ServerTimeout + gfs.LeaseExpire)
 
 	// restart
 	for i := 0; i < csNum; i++ {
@@ -699,10 +699,10 @@ func TestPersistentChunkServer(t *testing.T) {
 	}
 
 	fmt.Println("###### Waiting for Chunk Servers to report their chunks to master...")
-	time.Sleep(2 * gfs.ServerTimeout)
+	time.Sleep(2*gfs.ServerTimeout + gfs.LeaseExpire)
 
 	// check recovery
-    checkWork(p, msg, t)
+	checkWork(p, msg, t)
 
 	errorAll(ch, 2, t)
 }
@@ -722,14 +722,14 @@ func TestPersistentMaster(t *testing.T) {
 	// shut master down
 	fmt.Println("###### Shutdown Master")
 	m.Shutdown()
-	time.Sleep(2 * gfs.ServerTimeout)
+	time.Sleep(2*gfs.ServerTimeout + gfs.LeaseExpire)
 
 	// restart
 	m = master.NewAndServe(mAdd, path.Join(root, "m"))
-	time.Sleep(2 * gfs.ServerTimeout)
+	time.Sleep(2*gfs.ServerTimeout + gfs.LeaseExpire)
 
 	// check recovery
-    checkWork(p, msg, t)
+	checkWork(p, msg, t)
 
 	errorAll(ch, 3, t)
 }
@@ -742,8 +742,8 @@ func TestDiskError(t *testing.T) {
 	ch := make(chan error, 5)
 	ch <- c.Create(p)
 
-    _, err := c.Append(p, msg)
-    ch <- err
+	_, err := c.Append(p, msg)
+	ch <- err
 
 	// get replica locations
 	var r1 gfs.GetChunkHandleReply
@@ -751,27 +751,33 @@ func TestDiskError(t *testing.T) {
 	var l gfs.GetReplicasReply
 	ch <- m.RPCGetReplicas(gfs.GetReplicasArg{r1.Handle}, &l)
 
-    fmt.Println("###### Destory two chunkserver's diskes")
+	fmt.Println("###### Destory two chunkserver's diskes")
 	// destory two server's disk
+	log.Info(l.Locations[:2])
 	for i, _ := range cs {
 		if csAdd[i] == l.Locations[0] || csAdd[i] == l.Locations[1] {
-            ii := strconv.Itoa(i)
-            os.RemoveAll(path.Join(root, "cs" + ii))
+			ii := strconv.Itoa(i)
+			os.RemoveAll(path.Join(root, "cs"+ii))
 		}
 	}
-    fmt.Println("###### Waiting for recovery")
-    time.Sleep(gfs.ServerTimeout)
+	fmt.Println("###### Waiting for recovery")
+	time.Sleep(gfs.ServerTimeout + gfs.LeaseExpire)
 
-    _, err = c.Append(p, msg)
-    ch <- err
+	_, err = c.Append(p, msg)
+	ch <- err
 
-    time.Sleep(gfs.ServerTimeout)
+	time.Sleep(gfs.ServerTimeout + gfs.LeaseExpire)
 
-    // TODO: check re-replication
-    // check recovery
-    checkWork(p, msg, t)
+	// TODO: check re-replication
+	// check recovery
+	checkWork(p, msg, t)
 
-    errorAll(ch, 5, t)
+	for _, v := range cs {
+		var nouse gfs.Nouse
+		v.PrintSelf(nouse, &nouse)
+	}
+
+	errorAll(ch, 5, t)
 }
 
 func TestMain(tm *testing.M) {
@@ -782,10 +788,10 @@ func TestMain(tm *testing.M) {
 		log.Fatal("cannot create temporary directory: ", err)
 	}
 
-    if os.Args[len(os.Args) - 1] == "-s" {
-        os.Args = os.Args[:len(os.Args)-1]
-        log.SetLevel(log.FatalLevel)
-    }
+	if os.Args[len(os.Args)-1] == "-s" {
+		os.Args = os.Args[:len(os.Args)-1]
+		log.SetLevel(log.FatalLevel)
+	}
 
 	// run master
 	os.Mkdir(path.Join(root, "m"), 0755)
@@ -798,7 +804,7 @@ func TestMain(tm *testing.M) {
 		ii := strconv.Itoa(i)
 		os.Mkdir(path.Join(root, "cs"+ii), 0755)
 		csAdd[i] = gfs.ServerAddress(fmt.Sprintf(":%v", 10000+i))
-		cs[i] = chunkserver.NewAndServe(csAdd[i], mAdd, path.Join(root, "cs" + ii))
+		cs[i] = chunkserver.NewAndServe(csAdd[i], mAdd, path.Join(root, "cs"+ii))
 	}
 
 	// init client

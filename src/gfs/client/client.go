@@ -234,6 +234,7 @@ func (c *Client) Append(path gfs.Path, data []byte) (offset gfs.Offset, err erro
 			if err == nil || err.(gfs.Error).Code == gfs.AppendExceedChunkSize {
 				break
 			}
+            time.Sleep(500 * time.Millisecond)
 			//log.Warning("Append connection error, try again ", err)
 		}
 		if err == nil || err.(gfs.Error).Code != gfs.AppendExceedChunkSize {
