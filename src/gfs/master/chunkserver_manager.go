@@ -47,8 +47,8 @@ func (csm *chunkServerManager) Heartbeat(addr gfs.ServerAddress) bool {
 
 // register a chunk to servers
 func (csm *chunkServerManager) AddChunk(addrs []gfs.ServerAddress, handle gfs.ChunkHandle) {
-	csm.RLock()
-	defer csm.RUnlock()
+	csm.Lock()
+	defer csm.Unlock()
 
 	for _, v := range addrs {
 		csm.servers[v].chunks[handle] = true

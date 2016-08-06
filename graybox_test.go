@@ -730,7 +730,6 @@ func TestPersistentMaster(t *testing.T) {
 
 // delete all files in two chunkservers ...
 func TestDiskError(t *testing.T) {
-    return
 	p := gfs.Path("/virus.die")
 	msg := []byte("fucking disk!")
 

@@ -52,6 +52,7 @@ type ErrorCode int
 const (
 	Success = iota
 	UnknownError
+    Timeout
 	AppendExceedChunkSize
 	WriteExceedChunkSize
 	ReadEOF
@@ -74,18 +75,26 @@ var (
 
 // system config
 const (
-	LeaseExpire        = 2 * time.Second //1 * time.Minute
-	HeartbeatInterval  = 200 * time.Millisecond
-	BackgroundInterval = 400 * time.Millisecond //
-	ServerTimeout      = 1 * time.Second
+    // chunk
+    LeaseExpire          = 2 * time.Second //1 * time.Minute
+	DefaultNumReplicas   = 3
+	MinimumNumReplicas   = 2
+	MaxChunkSize         = 512 << 10 // 512KB DEBUG ONLY 64 << 20
+	MaxAppendSize        = MaxChunkSize / 4
 
-	MaxChunkSize  = 512 << 10 // 512KB DEBUG ONLY 64 << 20
-	MaxAppendSize = MaxChunkSize / 4
+    // master
+	HeartbeatInterval    = 200 * time.Millisecond
+	ServerCheckInterval  = 400 * time.Millisecond //
+    MasterStoreInterval  = 30 * time.Second // 30 * time.Minute
 
-	DefaultNumReplicas = 3
-	MinimumNumReplicas = 2
-
+    // chunk server
+	ServerTimeout        = 1 * time.Second
+    MutationWaitTimeout  = 4 * time.Second
+    ServerStoreInterval  = 30 * time.Second // 30 * time.Minute
 	DownloadBufferExpire = 2 * time.Minute
 	DownloadBufferTick   = 10 * time.Second
+
+    // client
+    ClientTryTimeout     = LeaseExpire + ServerTimeout + 100 * time.Millisecond
 	LeaseBufferTick      = 500 * time.Millisecond
 )

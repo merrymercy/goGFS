@@ -73,21 +73,28 @@ func NewAndServe(address gfs.ServerAddress, serverRoot string) *Master {
 		}
 	}()
 
+
 	// Background Task
+	// BackgroundActivity does all the background activities
+	// server disconnection handle, garbage collection, stale replica detection, etc
 	go func() {
-		ticker := time.Tick(gfs.BackgroundInterval)
+		checkTicker := time.Tick(gfs.ServerCheckInterval)
+		storeTicker := time.Tick(gfs.MasterStoreInterval)
 		for {
+			var err error
 			select {
 			case <-m.shutdown:
 				return
-			case <-ticker:
+			case <-checkTicker:
+				err = m.serverCheck()
+			case <-storeTicker:
+				err = m.storeMeta()
 			}
-
-			err := m.backgroundActivity()
 			if err != nil {
-				log.Warning("[ignored] Background error ", err)
+				log.Warning("Background error ", err)
 			}
 		}
+
 	}()
 
 	log.Infof("Master is running now. addr = %v", address)
@@ -168,7 +175,7 @@ func (m *Master) Shutdown() {
 
 // BackgroundActivity does all the background activities
 // server disconnection handle, garbage collection, stale replica detection, etc
-func (m *Master) backgroundActivity() error {
+func (m *Master) serverCheck() error {
 	// detect dead servers
 	addrs := m.csm.DetectDeadServers()
 	for _, v := range addrs {
@@ -185,7 +192,7 @@ func (m *Master) backgroundActivity() error {
 
 	// add replicas for need request
 	handles := m.cm.GetNeedlist()
-	log.Info("Master Background ", handles)
+	log.Info("Master Need ", handles)
 	if handles != nil {
 		for i := 0; i < len(handles); i++ {
 			ck := m.cm.chunk[handles[i]]
@@ -274,11 +281,9 @@ func (m *Master) RPCGetReplicas(args gfs.GetReplicasArg, reply *gfs.GetReplicasR
 	if err != nil {
 		return err
 	}
-
-	for _, v := range servers.GetAll() {
-		reply.Locations = append(reply.Locations, v.(gfs.ServerAddress))
+	for _, v := range servers {
+		reply.Locations = append(reply.Locations, v)
 	}
-
 	return nil
 }
 

@@ -3,7 +3,7 @@ package client
 import (
 	"fmt"
 	"io"
-	//"time"
+	"time"
 	"math/rand"
 
 	"gfs"
@@ -104,12 +104,20 @@ func (c *Client) Read(path gfs.Path, offset gfs.Offset, data []byte) (n int, err
 		}
 
 		var n int
-		for { // infinite try
+        wait := time.NewTimer(gfs.ClientTryTimeout)
+        loop:
+		for {
+            select {
+            case <-wait.C:
+                err = gfs.Error{gfs.Timeout, "Read Timeout"}
+                break loop
+            default:
+            }
 			n, err = c.ReadChunk(handle, chunkOffset, data[pos:])
 			if err == nil || err.(gfs.Error).Code == gfs.ReadEOF {
 				break
 			}
-			//log.Info("Read connection error, try again: ", err)
+			//log.Warning("Read connection error, try again: ", err)
 		}
 
 		offset += gfs.Offset(n)
@@ -157,13 +165,20 @@ func (c *Client) Write(path gfs.Path, offset gfs.Offset, data []byte) error {
 			writeLen = writeMax
 		}
 
+        wait := time.NewTimer(gfs.ClientTryTimeout)
+        loop:
 		for {
+            select {
+            case <-wait.C:
+                err = fmt.Errorf("Write Timeout")
+                break loop
+            default:
+            }
 			err = c.WriteChunk(handle, chunkOffset, data[begin:begin+writeLen])
 			if err == nil {
 				break
 			}
-
-			//log.Info("Write : connection error, try again ", err)
+			//log.Warning("Write : connection error, try again ", err)
 		}
 		if err != nil {
 			return err
@@ -205,7 +220,16 @@ func (c *Client) Append(path gfs.Path, data []byte) (offset gfs.Offset, err erro
 			return
 		}
 
+
+        wait := time.NewTimer(gfs.ClientTryTimeout)
+        loop:
 		for {
+            select {
+            case <-wait.C:
+                err = gfs.Error{gfs.Timeout, "Append Timeout"}
+                break loop
+            default:
+            }
 			chunkOffset, err = c.AppendChunk(handle, data)
 			if err == nil || err.(gfs.Error).Code == gfs.AppendExceedChunkSize {
 				break
@@ -309,7 +333,7 @@ func (c *Client) AppendChunk(handle gfs.ChunkHandle, data []byte) (offset gfs.Of
 
 	l, err := c.leaseBuf.Get(handle)
 	if err != nil {
-		return -1, err
+		return -1, gfs.Error{gfs.UnknownError, err.Error()}
 	}
 
 	dataID := chunkserver.NewDataID(handle)

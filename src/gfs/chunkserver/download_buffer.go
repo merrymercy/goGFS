@@ -1,6 +1,7 @@
 package chunkserver
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
@@ -34,15 +35,13 @@ func newDownloadBuffer(expire, tick time.Duration) *downloadBuffer {
 		for {
 			<-ticker
 			now := time.Now()
-			buf.RLock()
+			buf.Lock()
 			for id, item := range buf.buffer {
 				if item.expire.Before(now) {
-					buf.RUnlock()
-					buf.Delete(id)
-					buf.RLock()
+					delete(buf.buffer, id)
 				}
 			}
-			buf.RUnlock()
+			buf.Unlock()
 		}
 	}()
 
@@ -71,6 +70,19 @@ func (buf *downloadBuffer) Get(id gfs.DataBufferID) ([]byte, bool) {
 	}
 	item.expire = time.Now().Add(buf.expire) // touch
 	return item.data, ok
+}
+
+func (buf *downloadBuffer) Fetch(id gfs.DataBufferID) ([]byte, error) {
+	buf.Lock()
+	defer buf.Unlock()
+
+	item, ok := buf.buffer[id]
+	if !ok {
+		return nil, fmt.Errorf("DataID %v not found in download buffer.", id)
+	}
+
+	delete(buf.buffer, id)
+	return item.data, nil
 }
 
 func (buf *downloadBuffer) Delete(id gfs.DataBufferID) {
