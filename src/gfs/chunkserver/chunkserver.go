@@ -35,7 +35,6 @@ type ChunkServer struct {
 
 type Mutation struct {
 	mtype   gfs.MutationType
-	version gfs.ChunkVersion
 	data    []byte
 	offset  gfs.Offset
 }
@@ -43,22 +42,16 @@ type Mutation struct {
 type chunkInfo struct {
 	sync.RWMutex
 	length        gfs.Offset
-	version       gfs.ChunkVersion // version number of the chunk in disk
+	version       gfs.ChunkVersion               // version number of the chunk in disk
 	checksum      gfs.Checksum
-	newestVersion gfs.ChunkVersion               // allocated newest version number
 	mutations     map[gfs.ChunkVersion]*Mutation // mutation buffer
+    abandoned     bool                           // unrecoverable error
 }
 
 const (
 	MetaFileName = "gfs-server.meta"
 	FilePerm     = 0755
 )
-
-// return the next version for chunk
-func (ck *chunkInfo) nextVersion() gfs.ChunkVersion {
-	ck.newestVersion++
-	return ck.newestVersion
-}
 
 // NewAndServe starts a chunkserver and return the pointer to it.
 func NewAndServe(addr, masterAddr gfs.ServerAddress, serverRoot string) *ChunkServer {
@@ -216,8 +209,6 @@ func (cs *ChunkServer) loadMeta() error {
 		cs.chunk[ck.Handle] = &chunkInfo{
 			length:        ck.Length,
 			version:       ck.Version,
-			newestVersion: ck.Version,
-			mutations:     make(map[gfs.ChunkVersion]*Mutation),
 		}
 	}
 
@@ -265,6 +256,28 @@ func (cs *ChunkServer) Shutdown() {
 	}
 }
 
+func (cs *ChunkServer) RPCCheckVersion(args gfs.CheckVersionArg, reply *gfs.CheckVersionReply) error {
+	cs.lock.RLock()
+	ck, ok := cs.chunk[args.Handle]
+	cs.lock.RUnlock()
+	if !ok {
+		return fmt.Errorf("Cannot find chunk %v", args.Handle)
+	}
+
+    ck.RLock()
+    defer ck.RUnlock()
+
+    if ck.version + gfs.ChunkVersion(1) == args.Version {
+        ck.version++
+        reply.Stale = false
+    } else {
+        log.Warningf("%v : stale chunk %v", cs.address, args.Handle)
+        ck.abandoned  = true
+        reply.Stale = true
+    }
+    return nil
+}
+
 // RPCForwardData is called by another replica who sends data to the current memory buffer.
 func (cs *ChunkServer) RPCForwardData(args gfs.ForwardDataArg, reply *gfs.ForwardDataReply) error {
 	if _, ok := cs.dl.Get(args.DataID); ok {
@@ -298,7 +311,6 @@ func (cs *ChunkServer) RPCCreateChunk(args gfs.CreateChunkArg, reply *gfs.Create
 
 	cs.chunk[args.Handle] = &chunkInfo{
 		length:    0,
-		mutations: make(map[gfs.ChunkVersion]*Mutation),
 	}
 	//filename := path.Join(cs.serverRoot, fmt.Sprintf("chunk%v.chk", args.Handle))
 	//_, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE, 0644)
@@ -314,7 +326,7 @@ func (cs *ChunkServer) RPCReadChunk(args gfs.ReadChunkArg, reply *gfs.ReadChunkR
 	cs.lock.RLock()
 	ck, ok := cs.chunk[handle]
 	cs.lock.RUnlock()
-	if !ok {
+	if !ok || ck.abandoned {
 		return fmt.Errorf("Cannot find chunk %v", handle)
 	}
 
@@ -352,31 +364,23 @@ func (cs *ChunkServer) RPCWriteChunk(args gfs.WriteChunkArg, reply *gfs.WriteChu
 	cs.lock.RLock()
 	ck, ok := cs.chunk[handle]
 	cs.lock.RUnlock()
-	if !ok {
+	if !ok || ck.abandoned {
 		return fmt.Errorf("Cannot find chunk %v", handle)
 	}
 
 	if err = func() error {
 		ck.Lock()
 		defer ck.Unlock()
-		// assign a new version
-		if newLen > ck.length {
-			ck.length = newLen
-		}
-		version := ck.nextVersion()
-		if _, ok := ck.mutations[version]; ok {
-			return fmt.Errorf("Duplicated mutation version %v for chunk %v", version, handle)
-		}
-		ck.mutations[version] = &Mutation{gfs.MutationWrite, version, data, args.Offset}
+        mutations := &Mutation{gfs.MutationWrite, data, args.Offset}
 
 		// apply to local
-		err = cs.doMutation(handle)
+		err = cs.doMutation(handle, mutations)
 		if err != nil {
 			return err
 		}
 
 		// call secondaries
-		callArgs := gfs.ApplyMutationArg{gfs.MutationWrite, version, args.DataID, args.Offset}
+		callArgs := gfs.ApplyMutationArg{gfs.MutationWrite, args.DataID, args.Offset}
 		err = util.CallAll(args.Secondaries, "ChunkServer.RPCApplyMutation", callArgs)
 		if err != nil {
 			return err
@@ -431,27 +435,28 @@ func (cs *ChunkServer) RPCAppendChunk(args gfs.AppendChunkArg, reply *gfs.Append
 		}
 		reply.Offset = offset
 
-		// allocate a new version
-		version := ck.nextVersion()
-		if _, ok := ck.mutations[version]; ok {
-			return fmt.Errorf("Duplicated mutation version %v for chunk %v", version, handle)
-		}
-		ck.mutations[version] = &Mutation{mtype, version, data, offset}
+        mutation := &Mutation{mtype, data, offset}
 
-		// log.Infof("Primary %v : append chunk %v version %v", cs.address, args.DataID.Handle, version)
+		//log.Infof("Primary %v : append chunk %v version %v", cs.address, args.DataID.Handle, version)
 
 		// apply to local
-		err = cs.doMutation(handle)
-		if err != nil {
-			return err
-		}
+        wait := make(chan error, 1)
+        go func() {
+            wait <- cs.doMutation(handle, mutation)
+        } ()
 
 		// call secondaries
-		callArgs := gfs.ApplyMutationArg{mtype, version, args.DataID, offset}
+		callArgs := gfs.ApplyMutationArg{mtype, args.DataID, offset}
 		err = util.CallAll(args.Secondaries, "ChunkServer.RPCApplyMutation", callArgs)
 		if err != nil {
 			return err
 		}
+
+        err = <-wait
+        if err != nil {
+            return err
+        }
+
 		return nil
 	}(); err != nil {
 		return err
@@ -474,21 +479,18 @@ func (cs *ChunkServer) RPCApplyMutation(args gfs.ApplyMutationArg, reply *gfs.Ap
 	cs.lock.RLock()
 	ck, ok := cs.chunk[handle]
 	cs.lock.RUnlock()
-	if !ok {
+	if !ok || ck.abandoned {
+        log.Fatal(ck.abandoned)
 		return fmt.Errorf("Cannot find chunk %v", handle)
 	}
 
 	//log.Infof("Server %v : get mutation to chunk %v version %v", cs.address, handle, args.Version)
 
-	mutation := Mutation{args.Mtype, args.Version, data, args.Offset}
+	mutation := &Mutation{args.Mtype, data, args.Offset}
 	err = func() error {
 		ck.Lock()
 		defer ck.Unlock()
-		if _, ok := ck.mutations[args.Version]; ok {
-			return fmt.Errorf("Duplicated mutation version %v for chunk %v", args.Version, handle)
-		}
-		ck.mutations[args.Version] = &mutation
-		err = cs.doMutation(handle)
+		err = cs.doMutation(handle, mutation)
 		return err
 	}()
 
@@ -513,11 +515,6 @@ func (cs *ChunkServer) RPCSendCopy(args gfs.SendCopyArg, reply *gfs.SendCopyRepl
 	_, err := cs.readChunk(handle, 0, data)
 	if err != nil {
 		return err
-	}
-
-	if ck.version != ck.newestVersion {
-		return fmt.Errorf("chunk %v In mutation", handle)
-		//reply.ErrorCode = gfs.NotAvailableForCopy
 	}
 
 	var r gfs.ApplyCopyReply
@@ -545,9 +542,8 @@ func (cs *ChunkServer) RPCApplyCopy(args gfs.ApplyCopyArg, reply *gfs.ApplyCopyR
 
 	//log.Infof("Server %v : Apply copy of %v", cs.address, handle)
 
-	ck.mutations = make(map[gfs.ChunkVersion]*Mutation, 0) // clear mutation buffer
-	err := cs.writeChunk(handle, args.Version, args.Data, 0, true)
-	ck.newestVersion = args.Version
+    ck.version = args.Version
+	err := cs.writeChunk(handle, args.Data, 0, true)
 	if err != nil {
 		return err
 	}
@@ -555,7 +551,7 @@ func (cs *ChunkServer) RPCApplyCopy(args gfs.ApplyCopyArg, reply *gfs.ApplyCopyR
 }
 
 // writeChunk writes data at offset to a chunk at disk
-func (cs *ChunkServer) writeChunk(handle gfs.ChunkHandle, version gfs.ChunkVersion, data []byte, offset gfs.Offset, lock bool) error {
+func (cs *ChunkServer) writeChunk(handle gfs.ChunkHandle, data []byte, offset gfs.Offset, lock bool) error {
 	cs.lock.RLock()
 	ck := cs.chunk[handle]
 	cs.lock.RUnlock()
@@ -564,9 +560,8 @@ func (cs *ChunkServer) writeChunk(handle gfs.ChunkHandle, version gfs.ChunkVersi
 	if newLen > ck.length {
 		ck.length = newLen
 	}
-	ck.version = version
 
-	//log.Infof("Server %v : write to chunk %v version %v", cs.address, handle, version)
+	log.Infof("Server %v : write to chunk %v data %q", cs.address, handle, data)
 	filename := path.Join(cs.serverRoot, fmt.Sprintf("chunk%v.chk", handle))
 	file, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE, FilePerm)
 	if err != nil {
@@ -596,48 +591,28 @@ func (cs *ChunkServer) readChunk(handle gfs.ChunkHandle, offset gfs.Offset, data
 }
 
 // apply mutations (write, append, pas) in chunk buffer in proper order according to version number
-func (cs *ChunkServer) doMutation(handle gfs.ChunkHandle) error {
-	cs.lock.RLock()
-	ck := cs.chunk[handle]
-	cs.lock.RUnlock()
+func (cs *ChunkServer) doMutation(handle gfs.ChunkHandle, m *Mutation) error {
+    // already locked
+    var lock bool
+    if m.mtype == gfs.MutationAppend {
+        lock = true
+    } else {
+        lock = false
+    }
 
-	for {
-		v, ok := ck.mutations[ck.version+1]
+    var err error
+    if m.mtype == gfs.MutationPad {
+        data := []byte{0}
+        err = cs.writeChunk(handle, data, gfs.MaxChunkSize-1, lock)
+    } else {
+        err = cs.writeChunk(handle, m.data, m.offset, lock)
+    }
 
-		if ok {
-			var lock bool
-			if v.mtype == gfs.MutationAppend {
-				lock = true
-			} else {
-				lock = false
-			}
+    if err != nil {
+        return err
+    }
 
-			var err error
-			if v.mtype == gfs.MutationPad {
-				//cs.padChunk(handle, v.version)
-				data := []byte{0}
-				err = cs.writeChunk(handle, v.version, data, gfs.MaxChunkSize-1, lock)
-			} else {
-				err = cs.writeChunk(handle, v.version, v.data, v.offset, lock)
-			}
-
-			delete(ck.mutations, v.version)
-
-			if err != nil {
-				return err
-			}
-		} else {
-			break
-		}
-	}
-
-	// TODO : detect older version mutation
-
-	if len(ck.mutations) == 0 {
-		ck.newestVersion = ck.version
-	}
-
-	return nil
+    return nil
 }
 
 // padChunk pads a chunk to max chunk size.

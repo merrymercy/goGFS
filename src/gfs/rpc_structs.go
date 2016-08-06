@@ -5,14 +5,14 @@ import (
 )
 
 //------ ChunkServer
-//type PushDataAndForwardArg struct {
-//    Handle    ChunkHandle
-//	Data      []byte
-//}
-//type PushDataAndForwardReply struct {
-//	DataID DataBufferID
-//    ErrorCode ErrorCode
-//}
+
+type CheckVersionArg struct {
+    Handle  ChunkHandle
+    Version ChunkVersion
+}
+type CheckVersionReply struct {
+    Stale   bool
+}
 
 type ForwardDataArg struct {
 	DataID     DataBufferID
@@ -23,12 +23,14 @@ type ForwardDataReply struct {
 	ErrorCode ErrorCode
 }
 
+
 type CreateChunkArg struct {
 	Handle ChunkHandle
 }
 type CreateChunkReply struct {
 	ErrorCode ErrorCode
 }
+
 
 type WriteChunkArg struct {
 	DataID      DataBufferID
@@ -39,6 +41,7 @@ type WriteChunkReply struct {
 	ErrorCode ErrorCode
 }
 
+
 type AppendChunkArg struct {
 	DataID      DataBufferID
 	Secondaries []ServerAddress
@@ -48,9 +51,9 @@ type AppendChunkReply struct {
 	ErrorCode ErrorCode
 }
 
+
 type ApplyMutationArg struct {
 	Mtype   MutationType
-	Version ChunkVersion
 	DataID  DataBufferID
 	Offset  Offset
 }
@@ -58,12 +61,14 @@ type ApplyMutationReply struct {
 	ErrorCode ErrorCode
 }
 
+
 type PadChunkArg struct {
 	Handle ChunkHandle
 }
 type PadChunkReply struct {
 	ErrorCode ErrorCode
 }
+
 
 type ReadChunkArg struct {
 	Handle ChunkHandle
@@ -76,6 +81,7 @@ type ReadChunkReply struct {
 	ErrorCode ErrorCode
 }
 
+
 type SendCopyArg struct {
 	Handle  ChunkHandle
 	Address ServerAddress
@@ -83,6 +89,7 @@ type SendCopyArg struct {
 type SendCopyReply struct {
 	ErrorCode ErrorCode
 }
+
 
 type ApplyCopyArg struct {
 	Handle  ChunkHandle
@@ -99,18 +106,21 @@ type Nouse struct{}
 //------ Master
 
 type HeartbeatArg struct {
-	Address         ServerAddress // chunkserver address
-	LeaseExtensions []ChunkHandle // leases to be extended
+	Address          ServerAddress // chunkserver address
+	LeaseExtensions  []ChunkHandle // leases to be extended
+    AbandondedChunks []ChunkHandle // unrecoverable chunks
 }
 type HeartbeatReply struct {
 	Report bool
 }
+
 
 type ReportChunksArg struct {
 	Address ServerAddress // chunkserver address
 	Chunks  []PersistentChunkInfo
 }
 type ReportChunksReply struct{}
+
 
 type GetPrimaryAndSecondariesArg struct {
 	Handle ChunkHandle
@@ -121,6 +131,7 @@ type GetPrimaryAndSecondariesReply struct {
 	Secondaries []ServerAddress
 }
 
+
 type ExtendLeaseArg struct {
 	Handle  ChunkHandle
 	Address ServerAddress
@@ -129,12 +140,14 @@ type ExtendLeaseReply struct {
 	Expire time.Time
 }
 
+
 type GetReplicasArg struct {
 	Handle ChunkHandle
 }
 type GetReplicasReply struct {
 	Locations []ServerAddress
 }
+
 
 type GetFileInfoArg struct {
 	Path Path
@@ -143,6 +156,15 @@ type GetFileInfoReply struct {
 	IsDir  bool
 	Length int64
 	Chunks int64
+}
+
+
+type GetChunkHandleArg struct {
+	Path  Path
+	Index ChunkIndex
+}
+type GetChunkHandleReply struct {
+	Handle ChunkHandle
 }
 
 type CreateFileArg struct {
@@ -171,12 +193,4 @@ type ListArg struct {
 }
 type ListReply struct {
 	Files []PathInfo
-}
-
-type GetChunkHandleArg struct {
-	Path  Path
-	Index ChunkIndex
-}
-type GetChunkHandleReply struct {
-	Handle ChunkHandle
 }

@@ -73,7 +73,6 @@ func NewAndServe(address gfs.ServerAddress, serverRoot string) *Master {
 		}
 	}()
 
-
 	// Background Task
 	// BackgroundActivity does all the background activities
 	// server disconnection handle, garbage collection, stale replica detection, etc
@@ -246,12 +245,12 @@ func (m *Master) RPCHeartbeat(args gfs.HeartbeatArg, reply *gfs.HeartbeatReply) 
 
 // RPCReportChunks is called by chunkserver to report its chunks to master
 func (m *Master) RPCReportChunks(args gfs.ReportChunksArg, reply *gfs.ReportChunksReply) error {
-    for _, v := range args.Chunks {
-        log.Infof("MASTER receive chunk %v from %v", v.Handle, args.Address)
-        m.cm.RegisterReplica(v.Handle, args.Address, true)
-        m.csm.AddChunk([]gfs.ServerAddress{args.Address}, v.Handle)
-    }
-    return nil
+	for _, v := range args.Chunks {
+		log.Infof("MASTER receive chunk %v from %v", v.Handle, args.Address)
+		m.cm.RegisterReplica(v.Handle, args.Address, true)
+		m.csm.AddChunk([]gfs.ServerAddress{args.Address}, v.Handle)
+	}
+	return nil
 }
 
 // RPCGetPrimaryAndSecondaries returns lease holder and secondaries of a chunk.
@@ -366,11 +365,11 @@ func (m *Master) RPCGetChunkHandle(args gfs.GetChunkHandleArg, reply *gfs.GetChu
 
 		m.csm.AddChunk(addrs, reply.Handle)
 
-        if len(addrs) < gfs.DefaultNumReplicas {// error in create chunk
-            m.cm.Lock()
-            m.cm.replicasNeedList = append(m.cm.replicasNeedList, reply.Handle)
-            m.cm.Unlock()
-        }
+		if len(addrs) < gfs.DefaultNumReplicas { // error in create chunk
+			m.cm.Lock()
+			m.cm.replicasNeedList = append(m.cm.replicasNeedList, reply.Handle)
+			m.cm.Unlock()
+		}
 	} else {
 		reply.Handle, err = m.cm.GetChunk(args.Path, args.Index)
 	}

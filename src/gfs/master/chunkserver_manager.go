@@ -28,6 +28,7 @@ func newChunkServerManager() *chunkServerManager {
 type chunkServerInfo struct {
 	lastHeartbeat time.Time
 	chunks        map[gfs.ChunkHandle]bool // set of chunks that the chunkserver has
+    garbage       []gfs.ChunkHandle
 }
 
 func (csm *chunkServerManager) Heartbeat(addr gfs.ServerAddress) bool {
@@ -37,7 +38,7 @@ func (csm *chunkServerManager) Heartbeat(addr gfs.ServerAddress) bool {
 	sv, ok := csm.servers[addr]
 	if !ok {
 		log.Info("New chunk server" + addr)
-		csm.servers[addr] = &chunkServerInfo{time.Now(), make(map[gfs.ChunkHandle]bool)}
+		csm.servers[addr] = &chunkServerInfo{time.Now(), make(map[gfs.ChunkHandle]bool), nil}
 		return true
 	} else {
 		sv.lastHeartbeat = time.Now()
@@ -53,6 +54,13 @@ func (csm *chunkServerManager) AddChunk(addrs []gfs.ServerAddress, handle gfs.Ch
 	for _, v := range addrs {
 		csm.servers[v].chunks[handle] = true
 	}
+}
+
+func (csm *chunkServerManager) AddGarbage(addr gfs.ServerAddress, handle gfs.ChunkHandle) {
+    csm.Lock()
+    defer csm.Unlock()
+
+    csm.servers[addr].garbage = append(csm.servers[addr].garbage, handle)
 }
 
 // ChooseReReplication chooses servers to perfomr re-replication
