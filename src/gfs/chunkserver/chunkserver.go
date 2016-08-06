@@ -20,6 +20,7 @@ import (
 
 // ChunkServer struct
 type ChunkServer struct {
+	lock       sync.RWMutex
 	address    gfs.ServerAddress // chunkserver address
 	master     gfs.ServerAddress // master address
 	serverRoot string            // path to data storage
@@ -27,9 +28,9 @@ type ChunkServer struct {
 	shutdown   chan struct{}
 
 	dl                     *downloadBuffer                // expiring download buffer
-	pendingLeaseExtensions *util.ArraySet                 // pending lease extension
 	chunk                  map[gfs.ChunkHandle]*chunkInfo // chunk information
 	dead                   bool                           // set to ture if server is shuntdown
+	pendingLeaseExtensions *util.ArraySet                 // pending lease extension
 }
 
 type Mutation struct {
@@ -132,19 +133,19 @@ func NewAndServe(addr, masterAddr gfs.ServerAddress, serverRoot string) *ChunkSe
 				Address:         addr,
 				LeaseExtensions: le,
 			}
-            var r gfs.HeartbeatReply
+			var r gfs.HeartbeatReply
 			if err := util.Call(cs.master, "Master.RPCHeartbeat", args, &r); err != nil {
 				// TODO
 				log.Info("heartbeat rpc error ", err)
 				//log.Exit(1)
 			}
 
-            if r.Report {
-                err := cs.reportSelf()
-                if err != nil {
-                    log.Warning(err)
-                }
-            }
+			if r.Report {
+				err := cs.reportSelf()
+				if err != nil {
+					log.Warning(err)
+				}
+			}
 
 			time.Sleep(gfs.HeartbeatInterval)
 			//log.Info(cs.address, " Beat")
@@ -158,10 +159,13 @@ func NewAndServe(addr, masterAddr gfs.ServerAddress, serverRoot string) *ChunkSe
 
 // report chunks
 func (cs *ChunkServer) reportSelf() error {
-    var arg gfs.ReportChunksArg
-    arg.Address = cs.address
+	cs.lock.RLock()
+	defer cs.lock.RUnlock()
+
+	var arg gfs.ReportChunksArg
+	arg.Address = cs.address
 	for handle, ck := range cs.chunk {
-        log.Info(cs.address, " report ", handle)
+		log.Info(cs.address, " report ", handle)
 		arg.Chunks = append(arg.Chunks, gfs.PersistentChunkInfo{
 			Handle:   handle,
 			Version:  ck.version,
@@ -170,12 +174,15 @@ func (cs *ChunkServer) reportSelf() error {
 		})
 	}
 
-    err := util.Call(cs.master, "Master.RPCReportChunks", arg, nil)
+	err := util.Call(cs.master, "Master.RPCReportChunks", arg, nil)
 	return err
 }
 
 // load metadata from disk
 func (cs *ChunkServer) loadMeta() error {
+	cs.lock.Lock()
+	defer cs.lock.Unlock()
+
 	filename := path.Join(cs.serverRoot, MetaFileName)
 	file, err := os.OpenFile(filename, os.O_RDONLY, FilePerm)
 	if err != nil {
@@ -208,6 +215,9 @@ func (cs *ChunkServer) loadMeta() error {
 
 // store metadate to disk
 func (cs *ChunkServer) storeMeta() error {
+	cs.lock.RLock()
+	defer cs.lock.RUnlock()
+
 	filename := path.Join(cs.serverRoot, MetaFileName)
 	file, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE, FilePerm)
 	if err != nil {
@@ -265,6 +275,8 @@ func (cs *ChunkServer) RPCForwardData(args gfs.ForwardDataArg, reply *gfs.Forwar
 
 // RPCCreateChunk is called by master to create a new chunk given the chunk handle.
 func (cs *ChunkServer) RPCCreateChunk(args gfs.CreateChunkArg, reply *gfs.CreateChunkReply) error {
+	cs.lock.Lock()
+	defer cs.lock.Unlock()
 	log.Infof("Server %v : create chunk %v", cs.address, args.Handle)
 
 	if _, ok := cs.chunk[args.Handle]; ok {
@@ -277,18 +289,20 @@ func (cs *ChunkServer) RPCCreateChunk(args gfs.CreateChunkArg, reply *gfs.Create
 		length:    0,
 		mutations: make(map[gfs.ChunkVersion]*Mutation),
 	}
-	filename := path.Join(cs.serverRoot, fmt.Sprintf("chunk%v.chk", args.Handle))
-	_, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE, 0644)
-	if err != nil {
-		return err
-	}
+	//filename := path.Join(cs.serverRoot, fmt.Sprintf("chunk%v.chk", args.Handle))
+	//_, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE, 0644)
+	//if err != nil {
+	//	return err
+	//}
 	return nil
 }
 
 // RPCReadChunk is called by client, read chunk data and return
 func (cs *ChunkServer) RPCReadChunk(args gfs.ReadChunkArg, reply *gfs.ReadChunkReply) error {
 	handle := args.Handle
+	cs.lock.RLock()
 	ck, ok := cs.chunk[handle]
+	cs.lock.RUnlock()
 	if !ok {
 		return fmt.Errorf("Cannot find chunk %v", handle)
 	}
@@ -324,12 +338,14 @@ func (cs *ChunkServer) RPCWriteChunk(args gfs.WriteChunkArg, reply *gfs.WriteChu
 	}
 
 	handle := args.DataID.Handle
+	cs.lock.RLock()
 	ck, ok := cs.chunk[handle]
+	cs.lock.RUnlock()
 	if !ok {
 		return fmt.Errorf("Cannot find chunk %v", handle)
 	}
 
-	err = func() error {
+	if err = func() error {
 		ck.Lock()
 		defer ck.Unlock()
 		// assign a new version
@@ -355,8 +371,7 @@ func (cs *ChunkServer) RPCWriteChunk(args gfs.WriteChunkArg, reply *gfs.WriteChu
 			return err
 		}
 		return nil
-	}()
-	if err != nil {
+	}(); err != nil {
 		return err
 	}
 
@@ -381,14 +396,16 @@ func (cs *ChunkServer) RPCAppendChunk(args gfs.AppendChunkArg, reply *gfs.Append
 	}
 
 	handle := args.DataID.Handle
+    cs.lock.RLock()
 	ck, ok := cs.chunk[handle]
+    cs.lock.RUnlock()
 	if !ok {
 		return fmt.Errorf("cannot find chunk %v", handle)
 	}
 
 	var mtype gfs.MutationType
 
-	err = func() error {
+	if err = func() error {
 		ck.Lock()
 		defer ck.Unlock()
 		newLen := ck.length + gfs.Offset(len(data))
@@ -425,9 +442,7 @@ func (cs *ChunkServer) RPCAppendChunk(args gfs.AppendChunkArg, reply *gfs.Append
 			return err
 		}
 		return nil
-	}()
-
-	if err != nil {
+	}(); err != nil {
 		return err
 	}
 
@@ -445,7 +460,9 @@ func (cs *ChunkServer) RPCApplyMutation(args gfs.ApplyMutationArg, reply *gfs.Ap
 	}
 
 	handle := args.DataID.Handle
+    cs.lock.RLock()
 	ck, ok := cs.chunk[handle]
+    cs.lock.RUnlock()
 	if !ok {
 		return fmt.Errorf("Cannot find chunk %v", handle)
 	}
@@ -470,7 +487,9 @@ func (cs *ChunkServer) RPCApplyMutation(args gfs.ApplyMutationArg, reply *gfs.Ap
 // RPCSendCCopy is called by master, send the whole copy to given address
 func (cs *ChunkServer) RPCSendCopy(args gfs.SendCopyArg, reply *gfs.SendCopyReply) error {
 	handle := args.Handle
+    cs.lock.RLock()
 	ck, ok := cs.chunk[handle]
+    cs.lock.RUnlock()
 	if !ok {
 		return fmt.Errorf("Cannot find chunk %v", handle)
 	}
@@ -503,7 +522,9 @@ func (cs *ChunkServer) RPCSendCopy(args gfs.SendCopyArg, reply *gfs.SendCopyRepl
 // rewrite the local version to given copy data
 func (cs *ChunkServer) RPCApplyCopy(args gfs.ApplyCopyArg, reply *gfs.ApplyCopyReply) error {
 	handle := args.Handle
+    cs.lock.RLock()
 	ck, ok := cs.chunk[handle]
+    cs.lock.RUnlock()
 	if !ok {
 		return fmt.Errorf("Cannot find chunk %v", handle)
 	}
@@ -535,7 +556,9 @@ func (cs *ChunkServer) deleteDownloadedData(id gfs.DataBufferID) ([]byte, error)
 
 // writeChunk writes data at offset to a chunk at disk
 func (cs *ChunkServer) writeChunk(handle gfs.ChunkHandle, version gfs.ChunkVersion, data []byte, offset gfs.Offset, lock bool) error {
+    cs.lock.RLock()
 	ck := cs.chunk[handle]
+    cs.lock.RUnlock()
 
 	newLen := offset + gfs.Offset(len(data))
 	if newLen > ck.length {
@@ -574,7 +597,9 @@ func (cs *ChunkServer) readChunk(handle gfs.ChunkHandle, offset gfs.Offset, data
 
 // apply mutations (write, append, pas) in chunk buffer in proper order according to version number
 func (cs *ChunkServer) doMutation(handle gfs.ChunkHandle) error {
+    cs.lock.RLock()
 	ck := cs.chunk[handle]
+    cs.lock.RUnlock()
 
 	for {
 		v, ok := ck.mutations[ck.version+1]
@@ -618,10 +643,10 @@ func (cs *ChunkServer) doMutation(handle gfs.ChunkHandle) error {
 // padChunk pads a chunk to max chunk size.
 // <code>cs.chunk[handle]</code> should be locked in advance
 func (cs *ChunkServer) padChunk(handle gfs.ChunkHandle, version gfs.ChunkVersion) error {
-	ck := cs.chunk[handle]
-	ck.version = version
-	ck.length = gfs.MaxChunkSize
-
+    log.Fatal("ChunkServer.padChunk is deserted!")
+	//ck := cs.chunk[handle]
+	//ck.version = version
+	//ck.length = gfs.MaxChunkSize
 	return nil
 }
 
@@ -649,6 +674,8 @@ func getContents(filename string) (string, error) {
 }
 
 func (cs *ChunkServer) PrintSelf(no1 gfs.Nouse, no2 *gfs.Nouse) error {
+    cs.lock.RLock()
+    cs.lock.RUnlock()
 	log.Info("============ ", cs.address, " ============")
 	if cs.dead {
 		log.Warning("DEAD")

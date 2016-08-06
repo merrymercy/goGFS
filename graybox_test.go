@@ -33,7 +33,7 @@ var (
 const (
 	mAdd  = ":7777"
 	csNum = 5
-	N     = 10
+	N     = 100
 )
 
 func errorAll(ch chan error, n int, t *testing.T) {
@@ -352,7 +352,7 @@ func (ct *Counter) Next() int {
 
 // a concurrent producer-consumer number collector for testing race contiditon
 func TestComprehensiveOperation(t *testing.T) {
-	createTick := 300 * time.Millisecond
+	createTick := 100 * time.Millisecond
 
 	done := make(chan struct{})
 
@@ -363,7 +363,6 @@ func TestComprehensiveOperation(t *testing.T) {
 
     // Hard !!
     go func() {
-        return
         i := 1
         cs[i-1].Shutdown()
         time.Sleep(gfs.ServerTimeout + gfs.LeaseExpire)

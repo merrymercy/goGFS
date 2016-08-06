@@ -222,7 +222,7 @@ func (m *Master) reReplication(handle gfs.ChunkHandle) error {
 		return err
 	}
 
-	m.cm.RegisterReplica(handle, to)
+	m.cm.RegisterReplica(handle, to, false)
 	m.csm.AddChunk([]gfs.ServerAddress{to}, handle)
 	return nil
 }
@@ -241,7 +241,7 @@ func (m *Master) RPCHeartbeat(args gfs.HeartbeatArg, reply *gfs.HeartbeatReply) 
 func (m *Master) RPCReportChunks(args gfs.ReportChunksArg, reply *gfs.ReportChunksReply) error {
     for _, v := range args.Chunks {
         log.Infof("MASTER receive chunk %v from %v", v.Handle, args.Address)
-        m.cm.RegisterReplica(v.Handle, args.Address)
+        m.cm.RegisterReplica(v.Handle, args.Address, true)
         m.csm.AddChunk([]gfs.ServerAddress{args.Address}, v.Handle)
     }
     return nil

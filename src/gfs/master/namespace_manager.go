@@ -75,8 +75,8 @@ func (nm *namespaceManager) array2tree(array []serialTreeNode, id int) *nsTree {
 }
 
 func (nm *namespaceManager) Deserialize(array []serialTreeNode) error {
-	nm.root.RLock()
-	defer nm.root.RUnlock()
+	nm.root.Lock()
+	defer nm.root.Unlock()
 	nm.root = nm.array2tree(array, len(array)-1)
 	return nil
 }

@@ -33,6 +33,7 @@ type chunkInfo struct {
 }
 
 type fileInfo struct {
+	sync.RWMutex
 	handles []gfs.ChunkHandle
 }
 
@@ -58,6 +59,7 @@ func (cm *chunkManager) Deserialize(files []serialChunkInfo) error {
 				checksum: ck.Checksum,
 			}
 		}
+		cm.numChunkHandle += gfs.ChunkHandle(len(v.Info))
 		cm.file[v.Path] = f
 	}
 
@@ -96,15 +98,19 @@ func newChunkManager() *chunkManager {
 }
 
 // RegisterReplica adds a replica for a chunk
-func (cm *chunkManager) RegisterReplica(handle gfs.ChunkHandle, addr gfs.ServerAddress) error {
+func (cm *chunkManager) RegisterReplica(handle gfs.ChunkHandle, addr gfs.ServerAddress, lock bool) error {
 	cm.RLock()
-	defer cm.RUnlock()
-
-	chunkinfo, ok := cm.chunk[handle]
+	ck, ok := cm.chunk[handle]
+	cm.RUnlock()
 	if !ok {
 		return fmt.Errorf("cannot find chunk %v", handle)
 	}
-	chunkinfo.location.Add(addr)
+
+    if (lock) {
+        ck.Lock()
+        defer ck.Unlock()
+    }
+	ck.location.Add(addr)
 	return nil
 }
 
@@ -113,11 +119,11 @@ func (cm *chunkManager) GetReplicas(handle gfs.ChunkHandle) (*util.ArraySet, err
 	cm.RLock()
 	defer cm.RUnlock()
 
-	chunkinfo, ok := cm.chunk[handle]
+	ck, ok := cm.chunk[handle]
 	if !ok {
 		return nil, fmt.Errorf("cannot find chunk %v", handle)
 	}
-	return &chunkinfo.location, nil
+	return &ck.location, nil
 }
 
 // GetChunk returns the chunk handle for (path, index).
@@ -145,24 +151,24 @@ func (cm *chunkManager) GetLeaseHolder(handle gfs.ChunkHandle) (*gfs.Lease, erro
 	defer cm.RUnlock()
 
 	ret := &gfs.Lease{}
-	chunkinfo, ok := cm.chunk[handle]
+	ck, ok := cm.chunk[handle]
 	if !ok {
 		return nil, fmt.Errorf("invalid chunk handle %v", handle)
 	}
 
-	chunkinfo.Lock()
-	defer chunkinfo.Unlock()
+	ck.Lock()
+	defer ck.Unlock()
 
-	if chunkinfo.expire.Before(time.Now()) { // grants a new lease
-		log.Warning(handle, " lease location ", chunkinfo.location.GetAll())
-		chunkinfo.primary = chunkinfo.location.RandomPick().(gfs.ServerAddress)
-		chunkinfo.expire = time.Now().Add(gfs.LeaseExpire)
+	if ck.expire.Before(time.Now()) { // grants a new lease
+		log.Warning(handle, " lease location ", ck.location.GetAll())
+		ck.primary = ck.location.RandomPick().(gfs.ServerAddress)
+		ck.expire = time.Now().Add(gfs.LeaseExpire)
 	}
 
-	ret.Primary = chunkinfo.primary
-	ret.Expire = chunkinfo.expire
-	for _, v := range chunkinfo.location.GetAll() {
-		if vv := v.(gfs.ServerAddress); vv != chunkinfo.primary {
+	ret.Primary = ck.primary
+	ret.Expire = ck.expire
+	for _, v := range ck.location.GetAll() {
+		if vv := v.(gfs.ServerAddress); vv != ck.primary {
 			ret.Secondaries = append(ret.Secondaries, vv)
 		}
 	}
@@ -172,9 +178,12 @@ func (cm *chunkManager) GetLeaseHolder(handle gfs.ChunkHandle) (*gfs.Lease, erro
 // ExtendLease extends the lease of chunk if the lease holder is primary.
 func (cm *chunkManager) ExtendLease(handle gfs.ChunkHandle, primary gfs.ServerAddress) error {
 	cm.RLock()
-	defer cm.RUnlock()
-
 	ck, ok := cm.chunk[handle]
+	cm.RUnlock()
+
+	ck.Lock()
+	defer ck.Unlock()
+
 	if !ok {
 		return fmt.Errorf("invalid chunk handle %v", handle)
 	}
@@ -192,7 +201,6 @@ func (cm *chunkManager) ExtendLease(handle gfs.ChunkHandle, primary gfs.ServerAd
 // returns the handle of the new chunk, and the servers that create the chunk successfully
 func (cm *chunkManager) CreateChunk(path gfs.Path, addrs []gfs.ServerAddress) (gfs.ChunkHandle, []gfs.ServerAddress, error) {
 	cm.Lock()
-	defer cm.Unlock()
 
 	handle := cm.numChunkHandle
 	cm.numChunkHandle++
@@ -206,7 +214,9 @@ func (cm *chunkManager) CreateChunk(path gfs.Path, addrs []gfs.ServerAddress) (g
 	fileinfo.handles = append(fileinfo.handles, handle)
 
 	// update chunk info
-	cm.chunk[handle] = &chunkInfo{path: path}
+    ck := &chunkInfo{path: path}
+	cm.chunk[handle] = ck
+	cm.Unlock()
 
 	var errList string
 	var success []gfs.ServerAddress
@@ -214,8 +224,7 @@ func (cm *chunkManager) CreateChunk(path gfs.Path, addrs []gfs.ServerAddress) (g
 		var r gfs.CreateChunkReply
 		err := util.Call(v, "ChunkServer.RPCCreateChunk", gfs.CreateChunkArg{handle}, &r)
 		if err == nil { // register
-			chunkinfo := cm.chunk[handle]
-			chunkinfo.location.Add(v)
+			ck.location.Add(v)
 			success = append(success, v)
 		} else {
 			errList += err.Error() + ";"
@@ -232,17 +241,19 @@ func (cm *chunkManager) CreateChunk(path gfs.Path, addrs []gfs.ServerAddress) (g
 // RemoveChunks removes disconnected chunks
 // if replicas number of a chunk is less than gfs.MininumNumReplicas, add it to need list
 func (cm *chunkManager) RemoveChunks(handles []gfs.ChunkHandle, server gfs.ServerAddress) error {
-	cm.Lock()
-	defer cm.Unlock()
 
 	errList := ""
 	for _, v := range handles {
 		ck := cm.chunk[v]
+        ck.Lock()
 		ck.location.Delete(server)
 		ck.expire = time.Now()
+        ck.Unlock()
 
 		if ck.location.Size() < gfs.MinimumNumReplicas {
+            cm.Lock()
 			cm.replicasNeedList = append(cm.replicasNeedList, v)
+            cm.Unlock()
 			if ck.location.Size() == 0 {
 				errList += fmt.Sprintf("Lose all replicas of chunk %v;", v)
 			}

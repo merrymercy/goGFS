@@ -155,6 +155,12 @@ type DeleteFileArg struct {
 }
 type DeleteFileReply struct{}
 
+type RenameFileArg struct {
+	Source Path
+	Target Path
+}
+type RenameFileReply struct{}
+
 type MkdirArg struct {
 	Path Path
 }
