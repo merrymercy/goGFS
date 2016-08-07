@@ -161,17 +161,21 @@ func (cm *chunkManager) GetLeaseHolder(handle gfs.ChunkHandle) (*gfs.Lease, erro
 
 	if ck.expire.Before(time.Now()) { // grants a new lease
 		// check version
-		var newlist []gfs.ServerAddress
 		ck.version++
 		arg := gfs.CheckVersionArg{handle, ck.version}
 		var wg sync.WaitGroup
+
 		wg.Add(len(ck.location))
+		var newlist []gfs.ServerAddress
+		var lock sync.Mutex // lock for newlist
 		for _, v := range ck.location {
 			go func(addr gfs.ServerAddress) {
 				var r gfs.CheckVersionReply
 				err := util.Call(addr, "ChunkServer.RPCCheckVersion", arg, &r)
 				if err == nil && r.Stale == false {
+					lock.Lock()
 					newlist = append(newlist, addr)
+					lock.Unlock()
 				} else { // TODO add to garbage collection
 					log.Warningf("detect stale chunk %v in %v (err: %v)", handle, addr, err)
 					//cs.garbage = append(cs.garbage, garbageChunk{addr, handle})
@@ -287,6 +291,7 @@ func (cm *chunkManager) RemoveChunks(handles []gfs.ChunkHandle, server gfs.Serve
 			cm.replicasNeedList = append(cm.replicasNeedList, v)
 			cm.Unlock()
 			if len(ck.location) == 0 {
+				//log.Fatal("lose all")
 				errList += fmt.Sprintf("Lose all replicas of chunk %v;", v)
 			}
 		}

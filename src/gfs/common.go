@@ -78,23 +78,23 @@ const (
 	// chunk
 	LeaseExpire        = 2 * time.Second //1 * time.Minute
 	DefaultNumReplicas = 3
-	MinimumNumReplicas = 2
+	MinimumNumReplicas = 3
 	MaxChunkSize       = 512 << 10 // 512KB DEBUG ONLY 64 << 20
 	MaxAppendSize      = MaxChunkSize / 4
 
 	// master
-	HeartbeatInterval   = 200 * time.Millisecond
 	ServerCheckInterval = 400 * time.Millisecond //
 	MasterStoreInterval = 30 * time.Second       // 30 * time.Minute
+	ServerTimeout       = 1 * time.Second
 
 	// chunk server
-	ServerTimeout        = 1 * time.Second
+	HeartbeatInterval    = 200 * time.Millisecond
 	MutationWaitTimeout  = 4 * time.Second
 	ServerStoreInterval  = 30 * time.Second // 30 * time.Minute
 	DownloadBufferExpire = 2 * time.Minute
 	DownloadBufferTick   = 10 * time.Second
 
 	// client
-	ClientTryTimeout = 2*LeaseExpire + 2*ServerTimeout
+	ClientTryTimeout = 2*LeaseExpire + 3*ServerTimeout
 	LeaseBufferTick  = 500 * time.Millisecond
 )

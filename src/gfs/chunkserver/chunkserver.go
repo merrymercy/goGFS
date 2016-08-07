@@ -112,8 +112,8 @@ func NewAndServe(addr, masterAddr gfs.ServerAddress, serverRoot string) *ChunkSe
 	// Background Activity
 	// heartbeat, store persistent meta ...
 	go func() {
-		heartbeatTicker := time.Tick(gfs.ServerCheckInterval)
-		storeTicker := time.Tick(gfs.MasterStoreInterval)
+		heartbeatTicker := time.Tick(gfs.HeartbeatInterval)
+		storeTicker := time.Tick(gfs.ServerStoreInterval)
 		quickStart := make(chan bool, 1) // send first heartbeat right away..
 		quickStart <- true
 		for {
@@ -168,8 +168,9 @@ func (cs *ChunkServer) reportSelf() error {
 
 	var arg gfs.ReportChunksArg
 	arg.Address = cs.address
+	log.Info(cs.address, " report collect start")
 	for handle, ck := range cs.chunk {
-		log.Info(cs.address, " report ", handle)
+		//log.Info(cs.address, " report ", handle)
 		arg.Chunks = append(arg.Chunks, gfs.PersistentChunkInfo{
 			Handle:   handle,
 			Version:  ck.version,
@@ -177,8 +178,11 @@ func (cs *ChunkServer) reportSelf() error {
 			Checksum: ck.checksum,
 		})
 	}
+	log.Info(cs.address, " report call")
 
 	err := util.Call(cs.master, "Master.RPCReportChunks", arg, nil)
+
+	log.Info(cs.address, " report call end")
 	return err
 }
 

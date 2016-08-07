@@ -245,11 +245,12 @@ func (m *Master) RPCHeartbeat(args gfs.HeartbeatArg, reply *gfs.HeartbeatReply) 
 
 // RPCReportChunks is called by chunkserver to report its chunks to master
 func (m *Master) RPCReportChunks(args gfs.ReportChunksArg, reply *gfs.ReportChunksReply) error {
-	m.cm.RLock()
-	defer m.cm.RUnlock()
 
 	for _, v := range args.Chunks {
-		if v.Version == m.cm.chunk[v.Handle].version {
+		m.cm.RLock()
+		version := m.cm.chunk[v.Handle].version
+		m.cm.RUnlock()
+		if v.Version == version {
 			log.Infof("Master receive chunk %v from %v", v.Handle, args.Address)
 			m.cm.RegisterReplica(v.Handle, args.Address, true)
 			m.csm.AddChunk([]gfs.ServerAddress{args.Address}, v.Handle)

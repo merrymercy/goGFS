@@ -33,7 +33,7 @@ var (
 const (
 	mAdd  = ":7777"
 	csNum = 5
-	N     = 10
+	N     = 50
 )
 
 func errorAll(ch chan error, n int, t *testing.T) {
@@ -255,10 +255,10 @@ func TestAppendChunk(t *testing.T) {
 		t.Error("incorrect data")
 	}
 
-	for _, v := range cs {
-		var nouse gfs.Nouse
-		v.PrintSelf(nouse, &nouse)
-	}
+	//for _, v := range cs {
+	//	var nouse gfs.Nouse
+	//	v.PrintSelf(nouse, &nouse)
+	//}
 
 	errorAll(ch, 2*N+2, t)
 }
@@ -357,7 +357,7 @@ func (ct *Counter) Next() int {
 
 // a concurrent producer-consumer number collector for testing race contiditon
 func TestComprehensiveOperation(t *testing.T) {
-	createTick := 300 * time.Millisecond
+	createTick := 100 * time.Millisecond
 
 	done := make(chan struct{})
 
@@ -493,7 +493,7 @@ func TestComprehensiveOperation(t *testing.T) {
 
 	// wait to test race contition
 	fmt.Println("###### Continue life for the elder to pass a long time test...")
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 10; i++ {
 		fmt.Print(" +1s ")
 		time.Sleep(time.Second)
 	}
@@ -772,10 +772,10 @@ func TestDiskError(t *testing.T) {
 	// check recovery
 	checkWork(p, msg, t)
 
-	for _, v := range cs {
-		var nouse gfs.Nouse
-		v.PrintSelf(nouse, &nouse)
-	}
+	//for _, v := range cs {
+	//	var nouse gfs.Nouse
+	//	v.PrintSelf(nouse, &nouse)
+	//}
 
 	errorAll(ch, 5, t)
 }
