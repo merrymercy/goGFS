@@ -76,7 +76,7 @@ func (cm *chunkManager) Serialize() []serialChunkInfo {
 		for _, handle := range v.handles {
 			chunks = append(chunks, gfs.PersistentChunkInfo{
 				Handle:   handle,
-				Length:   0, // TODO
+				Length:   0,
 				Version:  cm.chunk[handle].version,
 				Checksum: 0,
 			})
@@ -99,14 +99,17 @@ func newChunkManager() *chunkManager {
 
 // RegisterReplica adds a replica for a chunk
 func (cm *chunkManager) RegisterReplica(handle gfs.ChunkHandle, addr gfs.ServerAddress, lock bool) error {
-	if lock {
-		cm.Lock()
-		defer cm.Unlock()
-	}
-
+	cm.RLock()
 	ck, ok := cm.chunk[handle]
+	defer cm.RUnlock()
+
 	if !ok {
 		return fmt.Errorf("cannot find chunk %v", handle)
+	}
+
+	if lock {
+		ck.Lock()
+		defer ck.Unlock()
 	}
 
 	ck.location = append(ck.location, addr)
@@ -145,28 +148,31 @@ func (cm *chunkManager) GetChunk(path gfs.Path, index gfs.ChunkIndex) (gfs.Chunk
 // GetLeaseHolder returns the chunkserver that hold the lease of a chunk
 // (i.e. primary) and expire time of the lease. If no one has a lease,
 // grants one to a replica it chooses.
-func (cm *chunkManager) GetLeaseHolder(handle gfs.ChunkHandle) (*gfs.Lease, error) {
+func (cm *chunkManager) GetLeaseHolder(handle gfs.ChunkHandle) (*gfs.Lease, []gfs.ServerAddress, error) {
 	cm.Lock()
 	ck, ok := cm.chunk[handle]
 	cm.Unlock()
 
 	if !ok {
-		return nil, fmt.Errorf("invalid chunk handle %v", handle)
+		return nil, nil, fmt.Errorf("invalid chunk handle %v", handle)
 	}
 
 	ck.Lock()
 	defer ck.Unlock()
+
+    var staleServers []gfs.ServerAddress
 
 	ret := &gfs.Lease{}
 	if ck.expire.Before(time.Now()) { // grants a new lease
 		// check version
 		ck.version++
 		arg := gfs.CheckVersionArg{handle, ck.version}
-		var wg sync.WaitGroup
 
-		wg.Add(len(ck.location))
 		var newlist []gfs.ServerAddress
 		var lock sync.Mutex // lock for newlist
+
+		var wg sync.WaitGroup
+		wg.Add(len(ck.location))
 		for _, v := range ck.location {
 			go func(addr gfs.ServerAddress) {
 				var r gfs.CheckVersionReply
@@ -175,9 +181,9 @@ func (cm *chunkManager) GetLeaseHolder(handle gfs.ChunkHandle) (*gfs.Lease, erro
 					lock.Lock()
 					newlist = append(newlist, addr)
 					lock.Unlock()
-				} else { // TODO add to garbage collection
+				} else { // add to garbage collection
 					log.Warningf("detect stale chunk %v in %v (err: %v)", handle, addr, err)
-					//cs.garbage = append(cs.garbage, garbageChunk{addr, handle})
+					staleServers = append(staleServers, addr)
 				}
 				wg.Done()
 			}(v)
@@ -199,16 +205,19 @@ func (cm *chunkManager) GetLeaseHolder(handle gfs.ChunkHandle) (*gfs.Lease, erro
 			ret.Secondaries = append(ret.Secondaries, v)
 		}
 	}
-	return ret, nil
+	return ret, staleServers, nil
 }
 
 // ExtendLease extends the lease of chunk if the lease holder is primary.
 func (cm *chunkManager) ExtendLease(handle gfs.ChunkHandle, primary gfs.ServerAddress) error {
 	return nil
 	log.Fatal("unsupported ExtendLease")
-	cm.Lock()
-	defer cm.Unlock()
+	cm.RLock()
 	ck, ok := cm.chunk[handle]
+	cm.RUnlock()
+
+	ck.Lock()
+	defer ck.Unlock()
 
 	if !ok {
 		return fmt.Errorf("invalid chunk handle %v", handle)
@@ -261,6 +270,8 @@ func (cm *chunkManager) CreateChunk(path gfs.Path, addrs []gfs.ServerAddress) (g
 	if errList == "" {
 		return handle, success, nil
 	} else {
+        // replicas are no enough, add to need list
+        cm.replicasNeedList = append(cm.replicasNeedList, handle)
 		return handle, success, fmt.Errorf(errList)
 	}
 }

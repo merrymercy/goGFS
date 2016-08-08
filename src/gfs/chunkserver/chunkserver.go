@@ -31,6 +31,7 @@ type ChunkServer struct {
 	chunk                  map[gfs.ChunkHandle]*chunkInfo // chunk information
 	dead                   bool                           // set to ture if server is shuntdown
 	pendingLeaseExtensions *util.ArraySet                 // pending lease extension
+	garbage                []gfs.ChunkHandle              // garbages
 }
 
 type Mutation struct {
@@ -69,7 +70,6 @@ func NewAndServe(addr, masterAddr gfs.ServerAddress, serverRoot string) *ChunkSe
 	l, e := net.Listen("tcp", string(cs.address))
 	if e != nil {
 		log.Fatal("chunkserver listen error:", e)
-		log.Exit(1)
 	}
 	cs.l = l
 
@@ -110,10 +110,11 @@ func NewAndServe(addr, masterAddr gfs.ServerAddress, serverRoot string) *ChunkSe
 	}()
 
 	// Background Activity
-	// heartbeat, store persistent meta ...
+	// heartbeat, store persistent meta, garbage collection ...
 	go func() {
 		heartbeatTicker := time.Tick(gfs.HeartbeatInterval)
 		storeTicker := time.Tick(gfs.ServerStoreInterval)
+		garbageTicker := time.Tick(gfs.GarbageCollectionInt)
 		quickStart := make(chan bool, 1) // send first heartbeat right away..
 		quickStart <- true
 		for {
@@ -121,16 +122,18 @@ func NewAndServe(addr, masterAddr gfs.ServerAddress, serverRoot string) *ChunkSe
 			select {
 			case <-cs.shutdown:
 				return
+			case <-quickStart:
+				err = cs.heartbeat()
 			case <-heartbeatTicker:
-				cs.heartbeat()
+				err = cs.heartbeat()
 			case <-storeTicker:
 				err = cs.storeMeta()
-			case <-quickStart:
-				cs.heartbeat()
+			case <-garbageTicker:
+				err = cs.garbageCollection()
 			}
 
 			if err != nil {
-				log.Warning("%v background error %v", cs.address, err)
+				log.Error("%v background error %v", cs.address, err)
 			}
 		}
 	}()
@@ -156,7 +159,19 @@ func (cs *ChunkServer) heartbeat() error {
 	if err != nil {
 		return err
 	}
+
+	cs.garbage = append(cs.garbage, r.Garbage...)
 	return err
+}
+
+// garbage collection  Note: no lock are needed, since the background activities are single thread
+func (cs *ChunkServer) garbageCollection() error {
+	for _, v := range cs.garbage {
+		cs.deleteChunk(v)
+	}
+
+	cs.garbage = make([]gfs.ChunkHandle, 0)
+	return nil
 }
 
 // RPCReportSelf reports all chunks the server holds
@@ -164,7 +179,7 @@ func (cs *ChunkServer) RPCReportSelf(args gfs.ReportSelfArg, reply *gfs.ReportSe
 	cs.lock.RLock()
 	defer cs.lock.RUnlock()
 
-	log.Info(cs.address, " report collect start")
+	log.Debug(cs.address, " report collect start")
 	var ret []gfs.PersistentChunkInfo
 	for handle, ck := range cs.chunk {
 		//log.Info(cs.address, " report ", handle)
@@ -176,7 +191,7 @@ func (cs *ChunkServer) RPCReportSelf(args gfs.ReportSelfArg, reply *gfs.ReportSe
 		})
 	}
 	reply.Chunks = ret
-	log.Info(cs.address, " report collect end")
+	log.Debug(cs.address, " report collect end")
 
 	return nil
 }
@@ -304,7 +319,7 @@ func (cs *ChunkServer) RPCCreateChunk(args gfs.CreateChunkArg, reply *gfs.Create
 	log.Infof("Server %v : create chunk %v", cs.address, args.Handle)
 
 	if _, ok := cs.chunk[args.Handle]; ok {
-		log.Warning("an ignored error on RPCCreateChunk")
+		log.Warning("[ignored] recreate a chunk in RPCCreateChunk")
 		return nil // TODO : error handle
 		//return fmt.Errorf("Chunk %v already exists", args.Handle)
 	}
@@ -391,7 +406,7 @@ func (cs *ChunkServer) RPCWriteChunk(args gfs.WriteChunkArg, reply *gfs.WriteChu
 	}
 
 	// extend lease
-	cs.pendingLeaseExtensions.Add(handle)
+	//cs.pendingLeaseExtensions.Add(handle)
 
 	return nil
 }
@@ -463,7 +478,7 @@ func (cs *ChunkServer) RPCAppendChunk(args gfs.AppendChunkArg, reply *gfs.Append
 	}
 
 	// extend lease
-	cs.pendingLeaseExtensions.Add(handle)
+	//cs.pendingLeaseExtensions.Add(handle)
 
 	return nil
 }
@@ -588,6 +603,17 @@ func (cs *ChunkServer) readChunk(handle gfs.ChunkHandle, offset gfs.Offset, data
 	defer f.Close()
 
 	return f.ReadAt(data, int64(offset))
+}
+
+// deleteChunk deletes a chunk during garbage collection
+func (cs *ChunkServer) deleteChunk(handle gfs.ChunkHandle) error {
+	cs.lock.Lock()
+	delete(cs.chunk, handle)
+	cs.lock.Unlock()
+
+	filename := path.Join(cs.serverRoot, fmt.Sprintf("chunk%v.chk", handle))
+	err := os.Remove(filename)
+	return err
 }
 
 // apply mutations (write, append, pad) in chunk buffer in proper order according to version number

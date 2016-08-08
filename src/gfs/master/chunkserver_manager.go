@@ -31,7 +31,7 @@ type chunkServerInfo struct {
 	garbage       []gfs.ChunkHandle
 }
 
-func (csm *chunkServerManager) Heartbeat(addr gfs.ServerAddress) bool {
+func (csm *chunkServerManager) Heartbeat(addr gfs.ServerAddress, reply *gfs.HeartbeatReply) bool {
 	csm.Lock()
 	defer csm.Unlock()
 
@@ -41,6 +41,9 @@ func (csm *chunkServerManager) Heartbeat(addr gfs.ServerAddress) bool {
 		csm.servers[addr] = &chunkServerInfo{time.Now(), make(map[gfs.ChunkHandle]bool), nil}
 		return true
 	} else {
+		// send garbage
+		reply.Garbage = csm.servers[addr].garbage
+		csm.servers[addr].garbage = make([]gfs.ChunkHandle, 0)
 		sv.lastHeartbeat = time.Now()
 		return false
 	}
@@ -56,11 +59,15 @@ func (csm *chunkServerManager) AddChunk(addrs []gfs.ServerAddress, handle gfs.Ch
 	}
 }
 
+// AddGarbage
 func (csm *chunkServerManager) AddGarbage(addr gfs.ServerAddress, handle gfs.ChunkHandle) {
 	csm.Lock()
 	defer csm.Unlock()
 
-	csm.servers[addr].garbage = append(csm.servers[addr].garbage, handle)
+	sv, ok := csm.servers[addr]
+	if ok {
+		sv.garbage = append(sv.garbage, handle)
+	}
 }
 
 // ChooseReReplication chooses servers to perfomr re-replication
@@ -90,17 +97,17 @@ func (csm *chunkServerManager) ChooseReReplication(handle gfs.ChunkHandle) (from
 // ChooseServers returns servers to store new chunk
 // called when a new chunk is create
 func (csm *chunkServerManager) ChooseServers(num int) ([]gfs.ServerAddress, error) {
-	csm.RLock()
-	defer csm.RUnlock()
 
 	if num > len(csm.servers) {
 		return nil, fmt.Errorf("no enough servers for %v replicas", num)
 	}
 
+	csm.RLock()
 	var all, ret []gfs.ServerAddress
 	for a, _ := range csm.servers {
 		all = append(all, a)
 	}
+	csm.RUnlock()
 
 	choose, err := util.Sample(len(all), num)
 	if err != nil {

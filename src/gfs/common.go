@@ -81,7 +81,7 @@ const (
 	MinimumNumReplicas = 2
 	MaxChunkSize       = 512 << 10 // 512KB DEBUG ONLY 64 << 20
 	MaxAppendSize      = MaxChunkSize / 4
-    DeletedFilePrefix  = "__del__"
+	DeletedFilePrefix  = "__del__"
 
 	// master
 	ServerCheckInterval = 400 * time.Millisecond //
@@ -92,6 +92,7 @@ const (
 	HeartbeatInterval    = 200 * time.Millisecond
 	MutationWaitTimeout  = 4 * time.Second
 	ServerStoreInterval  = 30 * time.Second // 30 * time.Minute
+	GarbageCollectionInt = 30 * time.Minute // 1 * time.Day
 	DownloadBufferExpire = 2 * time.Minute
 	DownloadBufferTick   = 10 * time.Second
 

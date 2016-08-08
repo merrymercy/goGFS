@@ -192,8 +192,8 @@ func (m *Master) serverCheck() error {
 	// add replicas for need request
 	handles := m.cm.GetNeedlist()
 	if handles != nil {
-        log.Info("Master Need ", handles)
-		m.cm.Lock()
+		log.Info("Master Need ", handles)
+		m.cm.RLock()
 		for i := 0; i < len(handles); i++ {
 			ck := m.cm.chunk[handles[i]]
 
@@ -204,7 +204,7 @@ func (m *Master) serverCheck() error {
 				ck.Unlock()
 			}
 		}
-		m.cm.Unlock()
+		m.cm.RUnlock()
 	}
 	return nil
 }
@@ -238,45 +238,51 @@ func (m *Master) reReplication(handle gfs.ChunkHandle) error {
 
 // RPCHeartbeat is called by chunkserver to let the master know that a chunkserver is alive
 func (m *Master) RPCHeartbeat(args gfs.HeartbeatArg, reply *gfs.HeartbeatReply) error {
-    isFirst := m.csm.Heartbeat(args.Address)
+	isFirst := m.csm.Heartbeat(args.Address, reply)
 
 	for _, handle := range args.LeaseExtensions {
-        continue
-        // ATTENTION !! dead lock
+		continue
+		// ATTENTION !! dead lock
 		m.cm.ExtendLease(handle, args.Address)
 	}
 
-    if isFirst { // if is first heartbeat, let chunkserver report itself
-        var r gfs.ReportSelfReply
-        err := util.Call(args.Address, "ChunkServer.RPCReportSelf", gfs.ReportSelfArg{}, &r)
-        if err != nil {
-            return err
-        }
+	if isFirst { // if is first heartbeat, let chunkserver report itself
+		var r gfs.ReportSelfReply
+		err := util.Call(args.Address, "ChunkServer.RPCReportSelf", gfs.ReportSelfArg{}, &r)
+		if err != nil {
+			return err
+		}
 
-        for _, v := range r.Chunks {
-            m.cm.RLock()
-            version := m.cm.chunk[v.Handle].version
-            m.cm.RUnlock()
+		for _, v := range r.Chunks {
+			m.cm.RLock()
+			version := m.cm.chunk[v.Handle].version
+			m.cm.RUnlock()
 
-            if v.Version == version {
-                log.Infof("Master receive chunk %v from %v", v.Handle, args.Address)
-                m.cm.RegisterReplica(v.Handle, args.Address, true)
-                m.csm.AddChunk([]gfs.ServerAddress{args.Address}, v.Handle)
-            } else {
-                log.Infof("Master discard %v", v.Handle)
-            }
-        }
-    }
+			if v.Version == version {
+				log.Infof("Master receive chunk %v from %v", v.Handle, args.Address)
+				m.cm.RegisterReplica(v.Handle, args.Address, true)
+				m.csm.AddChunk([]gfs.ServerAddress{args.Address}, v.Handle)
+			} else {
+				log.Infof("Master discard %v", v.Handle)
+			}
+		}
+	}
 	return nil
 }
 
 // RPCGetPrimaryAndSecondaries returns lease holder and secondaries of a chunk.
 // If no one holds the lease currently, grant one.
+// Master will communicate with all replicas holder to check version, if stale replica is detected, add it to garbage collection
 func (m *Master) RPCGetPrimaryAndSecondaries(args gfs.GetPrimaryAndSecondariesArg, reply *gfs.GetPrimaryAndSecondariesReply) error {
-	lease, err := m.cm.GetLeaseHolder(args.Handle)
+	lease, staleServers, err := m.cm.GetLeaseHolder(args.Handle)
 	if err != nil {
 		return err
 	}
+
+	for _, v := range staleServers {
+		m.csm.AddGarbage(v, args.Handle)
+	}
+
 	reply.Primary = lease.Primary
 	reply.Expire = lease.Expire
 	reply.Secondaries = lease.Secondaries
@@ -387,12 +393,6 @@ func (m *Master) RPCGetChunkHandle(args gfs.GetChunkHandleArg, reply *gfs.GetChu
 		}
 
 		m.csm.AddChunk(addrs, reply.Handle)
-
-		if len(addrs) < gfs.DefaultNumReplicas { // error in create chunk
-			m.cm.Lock()
-			m.cm.replicasNeedList = append(m.cm.replicasNeedList, reply.Handle)
-			m.cm.Unlock()
-		}
 	} else {
 		reply.Handle, err = m.cm.GetChunk(args.Path, args.Index)
 	}

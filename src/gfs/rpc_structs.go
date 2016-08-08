@@ -111,6 +111,7 @@ type HeartbeatArg struct {
 	AbandondedChunks []ChunkHandle // unrecoverable chunks
 }
 type HeartbeatReply struct {
+	Garbage []ChunkHandle
 }
 
 type ReportSelfArg struct {
