@@ -351,7 +351,7 @@ func (c *Client) AppendChunk(handle gfs.ChunkHandle, data []byte) (offset gfs.Of
 		return -1, gfs.Error{gfs.UnknownError, err.Error()}
 	}
 
-	log.Warning("Client : send append request to primary. data : %v", dataID)
+	//log.Warning("Client : send append request to primary. data : %v", dataID)
 
 	var a gfs.AppendChunkReply
 	acargs := gfs.AppendChunkArg{dataID, l.Secondaries}

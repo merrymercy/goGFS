@@ -219,7 +219,7 @@ func (cs *ChunkServer) loadMeta() error {
 
 	// load into memory
 	for _, ck := range metas {
-		log.Infof("Server %v restore %v version: %v length: %v", cs.address, ck.Handle, ck.Version, ck.Length)
+		//log.Infof("Server %v restore %v version: %v length: %v", cs.address, ck.Handle, ck.Version, ck.Length)
 		cs.chunk[ck.Handle] = &chunkInfo{
 			length:  ck.Length,
 			version: ck.Version,
@@ -282,7 +282,7 @@ func (cs *ChunkServer) RPCCheckVersion(args gfs.CheckVersionArg, reply *gfs.Chec
 	ck.Lock()
 	defer ck.Unlock()
 
-	if ck.version+gfs.ChunkVersion(1) == args.Version {
+	if ck.version + gfs.ChunkVersion(1) == args.Version {
 		ck.version++
 		reply.Stale = false
 	} else {
@@ -524,7 +524,7 @@ func (cs *ChunkServer) RPCSendCopy(args gfs.SendCopyArg, reply *gfs.SendCopyRepl
 	ck.RLock()
 	defer ck.RUnlock()
 
-	//log.Infof("Server %v : Send copy of %v to %v", cs.address, handle, args.Address)
+	log.Infof("Server %v : Send copy of %v to %v", cs.address, handle, args.Address)
 	data := make([]byte, ck.length)
 	_, err := cs.readChunk(handle, 0, data)
 	if err != nil {
@@ -554,13 +554,14 @@ func (cs *ChunkServer) RPCApplyCopy(args gfs.ApplyCopyArg, reply *gfs.ApplyCopyR
 	ck.Lock()
 	defer ck.Unlock()
 
-	//log.Infof("Server %v : Apply copy of %v", cs.address, handle)
+	log.Infof("Server %v : Apply copy of %v", cs.address, handle)
 
 	ck.version = args.Version
 	err := cs.writeChunk(handle, args.Data, 0, true)
 	if err != nil {
 		return err
 	}
+	log.Infof("Server %v : Apply done", cs.address)
 	return nil
 }
 

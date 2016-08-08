@@ -98,18 +98,23 @@ func newChunkManager() *chunkManager {
 }
 
 // RegisterReplica adds a replica for a chunk
-func (cm *chunkManager) RegisterReplica(handle gfs.ChunkHandle, addr gfs.ServerAddress, lock bool) error {
-	cm.RLock()
-	ck, ok := cm.chunk[handle]
-	defer cm.RUnlock()
+func (cm *chunkManager) RegisterReplica(handle gfs.ChunkHandle, addr gfs.ServerAddress, useLock bool) error {
+	var ck *chunkInfo
+	var ok bool
+
+	if useLock {
+		cm.RLock()
+		ck, ok = cm.chunk[handle]
+		cm.RUnlock()
+
+		ck.Lock()
+		defer ck.Unlock()
+	} else {
+		ck, ok = cm.chunk[handle]
+	}
 
 	if !ok {
 		return fmt.Errorf("cannot find chunk %v", handle)
-	}
-
-	if lock {
-		ck.Lock()
-		defer ck.Unlock()
 	}
 
 	ck.location = append(ck.location, addr)
@@ -149,9 +154,9 @@ func (cm *chunkManager) GetChunk(path gfs.Path, index gfs.ChunkIndex) (gfs.Chunk
 // (i.e. primary) and expire time of the lease. If no one has a lease,
 // grants one to a replica it chooses.
 func (cm *chunkManager) GetLeaseHolder(handle gfs.ChunkHandle) (*gfs.Lease, []gfs.ServerAddress, error) {
-	cm.Lock()
+	cm.RLock()
 	ck, ok := cm.chunk[handle]
-	cm.Unlock()
+	cm.RUnlock()
 
 	if !ok {
 		return nil, nil, fmt.Errorf("invalid chunk handle %v", handle)
@@ -160,7 +165,7 @@ func (cm *chunkManager) GetLeaseHolder(handle gfs.ChunkHandle) (*gfs.Lease, []gf
 	ck.Lock()
 	defer ck.Unlock()
 
-    var staleServers []gfs.ServerAddress
+	var staleServers []gfs.ServerAddress
 
 	ret := &gfs.Lease{}
 	if ck.expire.Before(time.Now()) { // grants a new lease
@@ -176,6 +181,7 @@ func (cm *chunkManager) GetLeaseHolder(handle gfs.ChunkHandle) (*gfs.Lease, []gf
 		for _, v := range ck.location {
 			go func(addr gfs.ServerAddress) {
 				var r gfs.CheckVersionReply
+
 				err := util.Call(addr, "ChunkServer.RPCCheckVersion", arg, &r)
 				if err == nil && r.Stale == false {
 					lock.Lock()
@@ -270,8 +276,8 @@ func (cm *chunkManager) CreateChunk(path gfs.Path, addrs []gfs.ServerAddress) (g
 	if errList == "" {
 		return handle, success, nil
 	} else {
-        // replicas are no enough, add to need list
-        cm.replicasNeedList = append(cm.replicasNeedList, handle)
+		// replicas are no enough, add to need list
+		cm.replicasNeedList = append(cm.replicasNeedList, handle)
 		return handle, success, fmt.Errorf(errList)
 	}
 }
@@ -299,7 +305,7 @@ func (cm *chunkManager) RemoveChunks(handles []gfs.ChunkHandle, server gfs.Serve
 		if num < gfs.MinimumNumReplicas {
 			cm.replicasNeedList = append(cm.replicasNeedList, v)
 			if num == 0 {
-				//log.Fatal("lose all")
+				log.Error("lose all")
 				errList += fmt.Sprintf("Lose all replicas of chunk %v;", v)
 			}
 		}

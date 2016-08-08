@@ -90,7 +90,7 @@ func NewAndServe(address gfs.ServerAddress, serverRoot string) *Master {
 				err = m.storeMeta()
 			}
 			if err != nil {
-				log.Warning("Background error ", err)
+				log.Error("Background error ", err)
 			}
 		}
 
