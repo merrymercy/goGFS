@@ -115,7 +115,7 @@ type PersistentBlock struct {
 	ChunkInfo     []serialChunkInfo
 }
 
-// load metadata from disk
+// loadMeta loads metadata from disk
 func (m *Master) loadMeta() error {
 	filename := path.Join(m.serverRoot, MetaFileName)
 	file, err := os.OpenFile(filename, os.O_RDONLY, FilePerm)
@@ -137,7 +137,7 @@ func (m *Master) loadMeta() error {
 	return nil
 }
 
-// store metadata to disk
+// storeMeta stores metadata to disk
 func (m *Master) storeMeta() error {
 	filename := path.Join(m.serverRoot, MetaFileName)
 	file, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE, FilePerm)
@@ -172,8 +172,8 @@ func (m *Master) Shutdown() {
 	}
 }
 
-// BackgroundActivity does all the background activities
-// server disconnection handle, garbage collection, stale replica detection, etc
+// serverCheck checks all chunkserver according to last heartbeat time
+// then removes all the information of the disconnnected servers
 func (m *Master) serverCheck() error {
 	// detect dead servers
 	addrs := m.csm.DetectDeadServers()
@@ -191,8 +191,8 @@ func (m *Master) serverCheck() error {
 
 	// add replicas for need request
 	handles := m.cm.GetNeedlist()
-	log.Info("Master Need ", handles)
 	if handles != nil {
+        log.Info("Master Need ", handles)
 		m.cm.Lock()
 		for i := 0; i < len(handles); i++ {
 			ck := m.cm.chunk[handles[i]]
@@ -209,7 +209,8 @@ func (m *Master) serverCheck() error {
 	return nil
 }
 
-// perform re-replication
+// reReplication performs re-replication, ck should be locked in top caller
+// new lease will not be granted during copy
 func (m *Master) reReplication(handle gfs.ChunkHandle) error {
 	// chunk are locked, so master will not grant lease during copy time
 	from, to, err := m.csm.ChooseReReplication(handle)
@@ -240,11 +241,12 @@ func (m *Master) RPCHeartbeat(args gfs.HeartbeatArg, reply *gfs.HeartbeatReply) 
     isFirst := m.csm.Heartbeat(args.Address)
 
 	for _, handle := range args.LeaseExtensions {
+        continue
         // ATTENTION !! dead lock
 		m.cm.ExtendLease(handle, args.Address)
 	}
 
-    if isFirst {
+    if isFirst { // if is first heartbeat, let chunkserver report itself
         var r gfs.ReportSelfReply
         err := util.Call(args.Address, "ChunkServer.RPCReportSelf", gfs.ReportSelfArg{}, &r)
         if err != nil {
@@ -308,8 +310,14 @@ func (m *Master) RPCCreateFile(args gfs.CreateFileArg, reply *gfs.CreateFileRepl
 }
 
 // RPCDelete is called by client to delete a file
-func (m *Master) RPCDelete(args gfs.DeleteFileArg, reply *gfs.DeleteFileReply) error {
+func (m *Master) RPCDeleteFile(args gfs.DeleteFileArg, reply *gfs.DeleteFileReply) error {
 	err := m.nm.Delete(args.Path)
+	return err
+}
+
+// RPCRename is called by client to rename a file
+func (m *Master) RPCRenameFile(args gfs.RenameFileArg, reply *gfs.RenameFileReply) error {
+	err := m.nm.Rename(args.Source, args.Target)
 	return err
 }
 

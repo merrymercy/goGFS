@@ -140,6 +140,7 @@ func NewAndServe(addr, masterAddr gfs.ServerAddress, serverRoot string) *ChunkSe
 	return cs
 }
 
+// heartbeat calls master regularly to report chunkserver's status
 func (cs *ChunkServer) heartbeat() error {
 	pe := cs.pendingLeaseExtensions.GetAllAndClear()
 	le := make([]gfs.ChunkHandle, len(pe))
@@ -158,13 +159,13 @@ func (cs *ChunkServer) heartbeat() error {
 	return err
 }
 
-// report chunks
+// RPCReportSelf reports all chunks the server holds
 func (cs *ChunkServer) RPCReportSelf(args gfs.ReportSelfArg, reply *gfs.ReportSelfReply) error {
 	cs.lock.RLock()
 	defer cs.lock.RUnlock()
 
 	log.Info(cs.address, " report collect start")
-    var ret []gfs.PersistentChunkInfo
+	var ret []gfs.PersistentChunkInfo
 	for handle, ck := range cs.chunk {
 		//log.Info(cs.address, " report ", handle)
 		ret = append(ret, gfs.PersistentChunkInfo{
@@ -174,13 +175,13 @@ func (cs *ChunkServer) RPCReportSelf(args gfs.ReportSelfArg, reply *gfs.ReportSe
 			Checksum: ck.checksum,
 		})
 	}
-    reply.Chunks = ret
+	reply.Chunks = ret
 	log.Info(cs.address, " report collect end")
 
 	return nil
 }
 
-// load metadata from disk
+// loadMeta loads metadata from disk
 func (cs *ChunkServer) loadMeta() error {
 	cs.lock.Lock()
 	defer cs.lock.Unlock()
@@ -213,7 +214,7 @@ func (cs *ChunkServer) loadMeta() error {
 	return nil
 }
 
-// store metadate to disk
+// storeMeta stores metadate to disk
 func (cs *ChunkServer) storeMeta() error {
 	cs.lock.RLock()
 	defer cs.lock.RUnlock()
@@ -254,6 +255,7 @@ func (cs *ChunkServer) Shutdown() {
 	}
 }
 
+// RPCCheckVersion is called by master to check version ande detect stale chunk
 func (cs *ChunkServer) RPCCheckVersion(args gfs.CheckVersionArg, reply *gfs.CheckVersionReply) error {
 	cs.lock.RLock()
 	ck, ok := cs.chunk[args.Handle]
@@ -262,8 +264,8 @@ func (cs *ChunkServer) RPCCheckVersion(args gfs.CheckVersionArg, reply *gfs.Chec
 		return fmt.Errorf("Chunk %v does not exist or is abandoned", args.Handle)
 	}
 
-	ck.RLock()
-	defer ck.RUnlock()
+	ck.Lock()
+	defer ck.Unlock()
 
 	if ck.version+gfs.ChunkVersion(1) == args.Version {
 		ck.version++
@@ -276,7 +278,7 @@ func (cs *ChunkServer) RPCCheckVersion(args gfs.CheckVersionArg, reply *gfs.Chec
 	return nil
 }
 
-// RPCForwardData is called by another replica who sends data to the current memory buffer.
+// RPCForwardData is called by client or another replica who sends data to the current memory buffer.
 func (cs *ChunkServer) RPCForwardData(args gfs.ForwardDataArg, reply *gfs.ForwardDataReply) error {
 	if _, ok := cs.dl.Get(args.DataID); ok {
 		return fmt.Errorf("Data %v already exists", args.DataID)
@@ -504,8 +506,8 @@ func (cs *ChunkServer) RPCSendCopy(args gfs.SendCopyArg, reply *gfs.SendCopyRepl
 		return fmt.Errorf("Chunk %v does not exist or is abandoned", handle)
 	}
 
-	ck.Lock()
-	defer ck.Unlock()
+	ck.RLock()
+	defer ck.RUnlock()
 
 	//log.Infof("Server %v : Send copy of %v to %v", cs.address, handle, args.Address)
 	data := make([]byte, ck.length)
@@ -553,6 +555,7 @@ func (cs *ChunkServer) writeChunk(handle gfs.ChunkHandle, data []byte, offset gf
 	ck := cs.chunk[handle]
 	cs.lock.RUnlock()
 
+	// ck is already locked in top caller
 	newLen := offset + gfs.Offset(len(data))
 	if newLen > ck.length {
 		ck.length = newLen

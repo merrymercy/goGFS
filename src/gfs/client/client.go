@@ -3,8 +3,8 @@ package client
 import (
 	"fmt"
 	"io"
-	"time"
 	"math/rand"
+	"time"
 
 	"gfs"
 	"gfs/chunkserver"
@@ -97,6 +97,11 @@ func (c *Client) Read(path gfs.Path, offset gfs.Offset, data []byte) (n int, err
 		index := gfs.ChunkIndex(offset / gfs.MaxChunkSize)
 		chunkOffset := offset % gfs.MaxChunkSize
 
+		if int64(index) >= f.Chunks {
+			err = gfs.Error{gfs.ReadEOF, "EOF over chunks"}
+			break
+		}
+
 		var handle gfs.ChunkHandle
 		handle, err = c.GetChunkHandle(path, index)
 		if err != nil {
@@ -104,15 +109,15 @@ func (c *Client) Read(path gfs.Path, offset gfs.Offset, data []byte) (n int, err
 		}
 
 		var n int
-        wait := time.NewTimer(gfs.ClientTryTimeout)
-        loop:
+		//wait := time.NewTimer(gfs.ClientTryTimeout)
+		//loop:
 		for {
-            select {
-            case <-wait.C:
-                err = gfs.Error{gfs.Timeout, "Read Timeout"}
-                break loop
-            default:
-            }
+			//select {
+			//case <-wait.C:
+			//    err = gfs.Error{gfs.Timeout, "Read Timeout"}
+			//    break loop
+			//default:
+			//}
 			n, err = c.ReadChunk(handle, chunkOffset, data[pos:])
 			if err == nil || err.(gfs.Error).Code == gfs.ReadEOF {
 				break
@@ -165,15 +170,15 @@ func (c *Client) Write(path gfs.Path, offset gfs.Offset, data []byte) error {
 			writeLen = writeMax
 		}
 
-        wait := time.NewTimer(gfs.ClientTryTimeout)
-        loop:
+		//wait := time.NewTimer(gfs.ClientTryTimeout)
+		//loop:
 		for {
-            select {
-            case <-wait.C:
-                err = fmt.Errorf("Write Timeout")
-                break loop
-            default:
-            }
+			//select {
+			//case <-wait.C:
+			//    err = fmt.Errorf("Write Timeout")
+			//    break loop
+			//default:
+			//}
 			err = c.WriteChunk(handle, chunkOffset, data[begin:begin+writeLen])
 			if err == nil {
 				break
@@ -220,20 +225,20 @@ func (c *Client) Append(path gfs.Path, data []byte) (offset gfs.Offset, err erro
 			return
 		}
 
-        wait := time.NewTimer(gfs.ClientTryTimeout)
-        loop:
+		//wait := time.NewTimer(gfs.ClientTryTimeout)
+		//loop:
 		for {
-            select {
-            case <-wait.C:
-                err = gfs.Error{gfs.Timeout, "Append Timeout"}
-                break loop
-            default:
-            }
+			//select {
+			//case <-wait.C:
+			//	err = gfs.Error{gfs.Timeout, "Append Timeout"}
+			//	break loop
+			//default:
+			//}
 			chunkOffset, err = c.AppendChunk(handle, data)
 			if err == nil || err.(gfs.Error).Code == gfs.AppendExceedChunkSize {
 				break
 			}
-            time.Sleep(500 * time.Millisecond)
+			time.Sleep(500 * time.Millisecond)
 			//log.Warning("Append connection error, try again ", err)
 		}
 		if err == nil || err.(gfs.Error).Code != gfs.AppendExceedChunkSize {
@@ -346,7 +351,7 @@ func (c *Client) AppendChunk(handle gfs.ChunkHandle, data []byte) (offset gfs.Of
 		return -1, gfs.Error{gfs.UnknownError, err.Error()}
 	}
 
-    log.Warning("Client : send append request to primary. data : %v", dataID)
+	log.Warning("Client : send append request to primary. data : %v", dataID)
 
 	var a gfs.AppendChunkReply
 	acargs := gfs.AppendChunkArg{dataID, l.Secondaries}

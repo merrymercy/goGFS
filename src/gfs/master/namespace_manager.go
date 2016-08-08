@@ -33,6 +33,7 @@ type serialTreeNode struct {
 	Chunks   int64
 }
 
+// tree2array transforms the namespace tree into an array for serialization
 func (nm *namespaceManager) tree2array(array *[]serialTreeNode, node *nsTree) int {
 	n := serialTreeNode{IsDir: node.isDir, Chunks: node.chunks}
 	if node.isDir {
@@ -48,6 +49,7 @@ func (nm *namespaceManager) tree2array(array *[]serialTreeNode, node *nsTree) in
 	return ret
 }
 
+// Serializa the metadata for storing to disk
 func (nm *namespaceManager) Serialize() []serialTreeNode {
 	nm.root.RLock()
 	defer nm.root.RUnlock()
@@ -58,6 +60,7 @@ func (nm *namespaceManager) Serialize() []serialTreeNode {
 	return ret
 }
 
+// array2tree transforms the an serialized array to namespace tree
 func (nm *namespaceManager) array2tree(array []serialTreeNode, id int) *nsTree {
 	n := &nsTree{
 		isDir:  array[id].IsDir,
@@ -74,6 +77,7 @@ func (nm *namespaceManager) array2tree(array []serialTreeNode, id int) *nsTree {
 	return n
 }
 
+// Deserializa the metadata from disk
 func (nm *namespaceManager) Deserialize(array []serialTreeNode) error {
 	nm.root.Lock()
 	defer nm.root.Unlock()
@@ -138,6 +142,8 @@ func (nm *namespaceManager) unlockParents(ps []string) {
 	}
 }
 
+// PartionLastName partions the last filename from p
+// e.g. /foo/bar/haha.txt -> /foo/bar , haha.txt
 func (nm *namespaceManager) PartionLastName(p gfs.Path) (gfs.Path, string) {
 	for i := len(p) - 1; i >= 0; i-- {
 		if p[i] == '/' {
@@ -170,7 +176,7 @@ func (nm *namespaceManager) Create(p gfs.Path) error {
 	return nil
 }
 
-// Create creates an empty file on path p. All parents should exist.
+// Delete deletes an file on path p.
 func (nm *namespaceManager) Delete(p gfs.Path) error {
 	ps, cwd, err := nm.lockParents(p, false)
 	defer nm.unlockParents(ps)
@@ -186,7 +192,13 @@ func (nm *namespaceManager) Delete(p gfs.Path) error {
 	// rename, laze delete
 	node := cwd.children[filename]
 	delete(cwd.children, filename)
-	cwd.children["_del_"+filename] = node
+	cwd.children[gfs.DeletedFilePrefix+filename] = node
+	return nil
+}
+
+// Rename rename an file on path p.
+func (nm *namespaceManager) Rename(source, target gfs.Path) error {
+	log.Fatal("Unsupported Rename")
 	return nil
 }
 

@@ -335,6 +335,9 @@ func TestWriteReadBigData(t *testing.T) {
 	}
 	ch <- err
 
+	// test over chunk EOF
+	// TODO
+
 	errorAll(ch, 4, t)
 }
 
@@ -488,7 +491,7 @@ func TestComprehensiveOperation(t *testing.T) {
 
 	// wait to test race contition
 	fmt.Println("###### Continue life for the elder to pass a long time test...")
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 10; i++ {
 		fmt.Print(" +1s ")
 		time.Sleep(time.Second)
 	}
