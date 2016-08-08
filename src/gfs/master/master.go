@@ -193,6 +193,7 @@ func (m *Master) serverCheck() error {
 	handles := m.cm.GetNeedlist()
 	log.Info("Master Need ", handles)
 	if handles != nil {
+		m.cm.Lock()
 		for i := 0; i < len(handles); i++ {
 			ck := m.cm.chunk[handles[i]]
 
@@ -203,6 +204,7 @@ func (m *Master) serverCheck() error {
 				ck.Unlock()
 			}
 		}
+		m.cm.Unlock()
 	}
 	return nil
 }
@@ -235,29 +237,34 @@ func (m *Master) reReplication(handle gfs.ChunkHandle) error {
 
 // RPCHeartbeat is called by chunkserver to let the master know that a chunkserver is alive
 func (m *Master) RPCHeartbeat(args gfs.HeartbeatArg, reply *gfs.HeartbeatReply) error {
-	reply.Report = m.csm.Heartbeat(args.Address)
+    isFirst := m.csm.Heartbeat(args.Address)
 
 	for _, handle := range args.LeaseExtensions {
+        // ATTENTION !! dead lock
 		m.cm.ExtendLease(handle, args.Address)
 	}
-	return nil
-}
 
-// RPCReportChunks is called by chunkserver to report its chunks to master
-func (m *Master) RPCReportChunks(args gfs.ReportChunksArg, reply *gfs.ReportChunksReply) error {
+    if isFirst {
+        var r gfs.ReportSelfReply
+        err := util.Call(args.Address, "ChunkServer.RPCReportSelf", gfs.ReportSelfArg{}, &r)
+        if err != nil {
+            return err
+        }
 
-	for _, v := range args.Chunks {
-		m.cm.RLock()
-		version := m.cm.chunk[v.Handle].version
-		m.cm.RUnlock()
-		if v.Version == version {
-			log.Infof("Master receive chunk %v from %v", v.Handle, args.Address)
-			m.cm.RegisterReplica(v.Handle, args.Address, true)
-			m.csm.AddChunk([]gfs.ServerAddress{args.Address}, v.Handle)
-		} else {
-			log.Infof("Master discard %v", v.Handle)
-		}
-	}
+        for _, v := range r.Chunks {
+            m.cm.RLock()
+            version := m.cm.chunk[v.Handle].version
+            m.cm.RUnlock()
+
+            if v.Version == version {
+                log.Infof("Master receive chunk %v from %v", v.Handle, args.Address)
+                m.cm.RegisterReplica(v.Handle, args.Address, true)
+                m.csm.AddChunk([]gfs.ServerAddress{args.Address}, v.Handle)
+            } else {
+                log.Infof("Master discard %v", v.Handle)
+            }
+        }
+    }
 	return nil
 }
 

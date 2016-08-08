@@ -33,7 +33,7 @@ var (
 const (
 	mAdd  = ":7777"
 	csNum = 5
-	N     = 50
+	N     = 100
 )
 
 func errorAll(ch chan error, n int, t *testing.T) {
@@ -254,11 +254,6 @@ func TestAppendChunk(t *testing.T) {
 	if len(expected) != 0 {
 		t.Error("incorrect data")
 	}
-
-	//for _, v := range cs {
-	//	var nouse gfs.Nouse
-	//	v.PrintSelf(nouse, &nouse)
-	//}
 
 	errorAll(ch, 2*N+2, t)
 }
@@ -493,7 +488,7 @@ func TestComprehensiveOperation(t *testing.T) {
 
 	// wait to test race contition
 	fmt.Println("###### Continue life for the elder to pass a long time test...")
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 5; i++ {
 		fmt.Print(" +1s ")
 		time.Sleep(time.Second)
 	}
@@ -753,7 +748,6 @@ func TestDiskError(t *testing.T) {
 
 	fmt.Println("###### Destory two chunkserver's diskes")
 	// destory two server's disk
-	log.Info(l.Locations[:2])
 	for i, _ := range cs {
 		if csAdd[i] == l.Locations[0] || csAdd[i] == l.Locations[1] {
 			ii := strconv.Itoa(i)
@@ -772,13 +766,14 @@ func TestDiskError(t *testing.T) {
 	// check recovery
 	checkWork(p, msg, t)
 
-	//for _, v := range cs {
-	//	var nouse gfs.Nouse
-	//	v.PrintSelf(nouse, &nouse)
-	//}
-
 	errorAll(ch, 5, t)
 }
+
+/*
+ *  TEST SUITE 4 - Challenge
+ */
+
+// todo : simulate an extremely adverse condition
 
 func TestMain(tm *testing.M) {
 	// create temporary directory

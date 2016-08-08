@@ -155,35 +155,29 @@ func (cs *ChunkServer) heartbeat() error {
 	if err != nil {
 		return err
 	}
-	if r.Report {
-		err = cs.reportSelf()
-	}
 	return err
 }
 
 // report chunks
-func (cs *ChunkServer) reportSelf() error {
+func (cs *ChunkServer) RPCReportSelf(args gfs.ReportSelfArg, reply *gfs.ReportSelfReply) error {
 	cs.lock.RLock()
 	defer cs.lock.RUnlock()
 
-	var arg gfs.ReportChunksArg
-	arg.Address = cs.address
 	log.Info(cs.address, " report collect start")
+    var ret []gfs.PersistentChunkInfo
 	for handle, ck := range cs.chunk {
 		//log.Info(cs.address, " report ", handle)
-		arg.Chunks = append(arg.Chunks, gfs.PersistentChunkInfo{
+		ret = append(ret, gfs.PersistentChunkInfo{
 			Handle:   handle,
 			Version:  ck.version,
 			Length:   ck.length,
 			Checksum: ck.checksum,
 		})
 	}
-	log.Info(cs.address, " report call")
+    reply.Chunks = ret
+	log.Info(cs.address, " report collect end")
 
-	err := util.Call(cs.master, "Master.RPCReportChunks", arg, nil)
-
-	log.Info(cs.address, " report call end")
-	return err
+	return nil
 }
 
 // load metadata from disk
@@ -316,11 +310,11 @@ func (cs *ChunkServer) RPCCreateChunk(args gfs.CreateChunkArg, reply *gfs.Create
 	cs.chunk[args.Handle] = &chunkInfo{
 		length: 0,
 	}
-	//filename := path.Join(cs.serverRoot, fmt.Sprintf("chunk%v.chk", args.Handle))
-	//_, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE, 0644)
-	//if err != nil {
-	//	return err
-	//}
+	filename := path.Join(cs.serverRoot, fmt.Sprintf("chunk%v.chk", args.Handle))
+	_, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE, 0644)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -564,7 +558,7 @@ func (cs *ChunkServer) writeChunk(handle gfs.ChunkHandle, data []byte, offset gf
 		ck.length = newLen
 	}
 
-	log.Infof("Server %v : write to chunk %v data %q", cs.address, handle, data)
+	//log.Infof("Server %v : write to chunk %v data %q", cs.address, handle, data)
 	filename := path.Join(cs.serverRoot, fmt.Sprintf("chunk%v.chk", handle))
 	file, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE, FilePerm)
 	if err != nil {

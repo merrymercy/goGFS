@@ -99,8 +99,11 @@ func newChunkManager() *chunkManager {
 
 // RegisterReplica adds a replica for a chunk
 func (cm *chunkManager) RegisterReplica(handle gfs.ChunkHandle, addr gfs.ServerAddress, lock bool) error {
-	cm.Lock()
-	defer cm.Unlock()
+    if lock {
+        cm.Lock()
+        defer cm.Unlock()
+    }
+
 	ck, ok := cm.chunk[handle]
 	if !ok {
 		return fmt.Errorf("cannot find chunk %v", handle)
@@ -153,6 +156,7 @@ func (cm *chunkManager) GetLeaseHolder(handle gfs.ChunkHandle) (*gfs.Lease, erro
 	}
 
 	ck.Lock()
+
 	defer ck.Unlock()
 
 	if ck.expire.Before(time.Now()) { // grants a new lease
@@ -245,6 +249,7 @@ func (cm *chunkManager) CreateChunk(path gfs.Path, addrs []gfs.ServerAddress) (g
 	var success []gfs.ServerAddress
 	for _, v := range addrs {
 		var r gfs.CreateChunkReply
+
 		err := util.Call(v, "ChunkServer.RPCCreateChunk", gfs.CreateChunkArg{handle}, &r)
 		if err == nil { // register
 			ck.location = append(ck.location, v)

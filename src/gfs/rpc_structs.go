@@ -111,15 +111,14 @@ type HeartbeatArg struct {
     AbandondedChunks []ChunkHandle // unrecoverable chunks
 }
 type HeartbeatReply struct {
-	Report bool
 }
 
 
-type ReportChunksArg struct {
-	Address ServerAddress // chunkserver address
+type ReportSelfArg struct {
+}
+type ReportSelfReply struct{
 	Chunks  []PersistentChunkInfo
 }
-type ReportChunksReply struct{}
 
 
 type GetPrimaryAndSecondariesArg struct {
