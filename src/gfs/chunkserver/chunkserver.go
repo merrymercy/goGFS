@@ -20,12 +20,12 @@ import (
 
 // ChunkServer struct
 type ChunkServer struct {
-	lock       sync.RWMutex
-	address    gfs.ServerAddress // chunkserver address
-	master     gfs.ServerAddress // master address
-	serverRoot string            // path to data storage
-	l          net.Listener
-	shutdown   chan struct{}
+	lock     sync.RWMutex
+	address  gfs.ServerAddress // chunkserver address
+	master   gfs.ServerAddress // master address
+	rootDir  string            // path to data storage
+	l        net.Listener
+	shutdown chan struct{}
 
 	dl                     *downloadBuffer                // expiring download buffer
 	chunk                  map[gfs.ChunkHandle]*chunkInfo // chunk information
@@ -55,13 +55,13 @@ const (
 )
 
 // NewAndServe starts a chunkserver and return the pointer to it.
-func NewAndServe(addr, masterAddr gfs.ServerAddress, serverRoot string) *ChunkServer {
+func NewAndServe(addr, masterAddr gfs.ServerAddress, rootDir string) *ChunkServer {
 	cs := &ChunkServer{
-		address:    addr,
-		shutdown:   make(chan struct{}),
-		master:     masterAddr,
-		serverRoot: serverRoot,
-		dl:         newDownloadBuffer(gfs.DownloadBufferExpire, gfs.DownloadBufferTick),
+		address:  addr,
+		shutdown: make(chan struct{}),
+		master:   masterAddr,
+		rootDir:  rootDir,
+		dl:       newDownloadBuffer(gfs.DownloadBufferExpire, gfs.DownloadBufferTick),
 		pendingLeaseExtensions: new(util.ArraySet),
 		chunk: make(map[gfs.ChunkHandle]*chunkInfo),
 	}
@@ -74,9 +74,9 @@ func NewAndServe(addr, masterAddr gfs.ServerAddress, serverRoot string) *ChunkSe
 	cs.l = l
 
 	// Mkdir
-	_, err := os.Stat(serverRoot)
+	_, err := os.Stat(rootDir)
 	if err != nil { // not exist
-		err := os.Mkdir(serverRoot, FilePerm)
+		err := os.Mkdir(rootDir, FilePerm)
 		if err != nil {
 			log.Fatal("error in mkdir ", err)
 		}
@@ -138,7 +138,7 @@ func NewAndServe(addr, masterAddr gfs.ServerAddress, serverRoot string) *ChunkSe
 		}
 	}()
 
-	log.Infof("ChunkServer is now running. addr = %v, root path = %v, master addr = %v", addr, serverRoot, masterAddr)
+	log.Infof("ChunkServer is now running. addr = %v, root path = %v, master addr = %v", addr, rootDir, masterAddr)
 
 	return cs
 }
@@ -201,7 +201,7 @@ func (cs *ChunkServer) loadMeta() error {
 	cs.lock.Lock()
 	defer cs.lock.Unlock()
 
-	filename := path.Join(cs.serverRoot, MetaFileName)
+	filename := path.Join(cs.rootDir, MetaFileName)
 	file, err := os.OpenFile(filename, os.O_RDONLY, FilePerm)
 	if err != nil {
 		return err
@@ -234,7 +234,7 @@ func (cs *ChunkServer) storeMeta() error {
 	cs.lock.RLock()
 	defer cs.lock.RUnlock()
 
-	filename := path.Join(cs.serverRoot, MetaFileName)
+	filename := path.Join(cs.rootDir, MetaFileName)
 	file, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE, FilePerm)
 	if err != nil {
 		return err
@@ -282,7 +282,7 @@ func (cs *ChunkServer) RPCCheckVersion(args gfs.CheckVersionArg, reply *gfs.Chec
 	ck.Lock()
 	defer ck.Unlock()
 
-	if ck.version + gfs.ChunkVersion(1) == args.Version {
+	if ck.version+gfs.ChunkVersion(1) == args.Version {
 		ck.version++
 		reply.Stale = false
 	} else {
@@ -327,7 +327,7 @@ func (cs *ChunkServer) RPCCreateChunk(args gfs.CreateChunkArg, reply *gfs.Create
 	cs.chunk[args.Handle] = &chunkInfo{
 		length: 0,
 	}
-	filename := path.Join(cs.serverRoot, fmt.Sprintf("chunk%v.chk", args.Handle))
+	filename := path.Join(cs.rootDir, fmt.Sprintf("chunk%v.chk", args.Handle))
 	_, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE, 0644)
 	if err != nil {
 		return err
@@ -578,7 +578,7 @@ func (cs *ChunkServer) writeChunk(handle gfs.ChunkHandle, data []byte, offset gf
 	}
 
 	//log.Infof("Server %v : write to chunk %v data %q", cs.address, handle, data)
-	filename := path.Join(cs.serverRoot, fmt.Sprintf("chunk%v.chk", handle))
+	filename := path.Join(cs.rootDir, fmt.Sprintf("chunk%v.chk", handle))
 	file, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE, FilePerm)
 	if err != nil {
 		return err
@@ -595,7 +595,7 @@ func (cs *ChunkServer) writeChunk(handle gfs.ChunkHandle, data []byte, offset gf
 
 // readChunk reads data at offset from a chunk at dist
 func (cs *ChunkServer) readChunk(handle gfs.ChunkHandle, offset gfs.Offset, data []byte) (int, error) {
-	filename := path.Join(cs.serverRoot, fmt.Sprintf("chunk%v.chk", handle))
+	filename := path.Join(cs.rootDir, fmt.Sprintf("chunk%v.chk", handle))
 
 	f, err := os.Open(filename)
 	if err != nil {
@@ -612,7 +612,7 @@ func (cs *ChunkServer) deleteChunk(handle gfs.ChunkHandle) error {
 	delete(cs.chunk, handle)
 	cs.lock.Unlock()
 
-	filename := path.Join(cs.serverRoot, fmt.Sprintf("chunk%v.chk", handle))
+	filename := path.Join(cs.rootDir, fmt.Sprintf("chunk%v.chk", handle))
 	err := os.Remove(filename)
 	return err
 }
@@ -688,7 +688,7 @@ func (cs *ChunkServer) PrintSelf(no1 gfs.Nouse, no2 *gfs.Nouse) error {
 		log.Warning("DEAD")
 	} else {
 		for h, v := range cs.chunk {
-			filename := path.Join(cs.serverRoot, fmt.Sprintf("chunk%v.chk", h))
+			filename := path.Join(cs.rootDir, fmt.Sprintf("chunk%v.chk", h))
 			log.Infof("chunk %v : version %v", h, v.version)
 			str, _ := getContents(filename)
 			log.Info(str)

@@ -45,7 +45,6 @@ func NewAndServe(address gfs.ServerAddress, serverRoot string) *Master {
 	l, e := net.Listen("tcp", string(m.address))
 	if e != nil {
 		log.Fatal("listen error:", e)
-		log.Exit(1)
 	}
 	m.l = l
 

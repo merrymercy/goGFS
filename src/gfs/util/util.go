@@ -17,11 +17,7 @@ func Call(srv gfs.ServerAddress, rpcname string, args interface{}, reply interfa
 	defer c.Close()
 
 	err := c.Call(rpcname, args, reply)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return err
 }
 
 // CallAll applies the rpc call to all destinations.
@@ -32,18 +28,18 @@ func CallAll(dst []gfs.ServerAddress, rpcname string, args interface{}) error {
 			ch <- Call(addr, rpcname, args, nil)
 		}(d)
 	}
-    errList := ""
+	errList := ""
 	for _ = range dst {
 		if err := <-ch; err != nil {
-            errList += err.Error() + ";"
+			errList += err.Error() + ";"
 		}
 	}
-    
-    if errList == "" {
-        return nil
-    } else {
-        return fmt.Errorf(errList)
-    }
+
+	if errList == "" {
+		return nil
+	} else {
+		return fmt.Errorf(errList)
+	}
 }
 
 // Sample randomly chooses k elements from {0, 1, ..., n-1}.
