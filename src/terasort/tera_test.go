@@ -27,8 +27,6 @@ const (
 )
 
 func TestGen(t *testing.T) {
-    fmt.Println("haha")
-
     err := m.TeraGen(inputFile)
     if err != nil {
         t.Error(err)

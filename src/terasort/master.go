@@ -13,6 +13,7 @@ import (
     "io"
 	"os"
 	"sync"
+    "strings"
 )
 
 type Master struct {
@@ -27,13 +28,6 @@ type Master struct {
 
 const (
 	WorkerChanSize        = 200
-
-	TeraGenNumber         = 201
-	TerasortMapTaskNum    = 5
-	TerasortReduceTaskNum = 10
-    StringLength          = 10
-
-    FilePerm              = 0755
 )
 
 func NewMaster(address, rootDir string) *Master {
@@ -124,22 +118,19 @@ func (m *Master) doJob(jobName string, inFile, outFile string, nMap int, nReduce
 	return nil
 }
 
+// split inFile into nMap files
 func (m *Master) split(jobName string, inFile string, nMap int) error {
     log.Info("master split...")
     singleSize := int(math.Ceil(float64(TeraGenNumber) / float64(nMap)))
 
-    in, err := os.Open(m.rootDir + inFile)
+    in, err := NewFileBuffer(m.rootDir + inFile, StringLength + 1, (StringLength + 1) * singleSize)
     if err != nil {
         return err
     }
-    defer in.Close()
-
-    buf := make([]byte, (StringLength + 1) * singleSize)
-
-    var pos int64 = 0
+    defer in.Destroy()
 
     for i := 0; i < nMap; i++ {
-        n, err := in.ReadAt(buf, pos)
+        buf, err := in.Get()
         if err != nil && err != io.EOF {
             return err
         }
@@ -148,15 +139,14 @@ func (m *Master) split(jobName string, inFile string, nMap int) error {
         if err != nil {
             return err
         }
-        out.Write(buf[:n])
+        out.Write(buf)
         out.Close()
-
-        pos += int64(n)
     }
 
 	return nil
 }
 
+// merge nReduce files into outFile
 func (m *Master) merge(jobName string, outFile string, nReduce int) error {
     log.Info("master merge...")
 
@@ -168,15 +158,14 @@ func (m *Master) merge(jobName string, outFile string, nReduce int) error {
 
 	for i := 0; i < nReduce; i++ {
         if err := func() error {
-            in, err := newFileBuffer(m.rootDir + mergeName(jobName, i), StringLength + 1, DefaultBufferSize)
+            in, err := NewFileBuffer(m.rootDir + mergeName(jobName, i), StringLength + 1, DefaultBufferSize)
             if err != nil {
                 return err
             }
-            defer in.destroy()
+            defer in.Destroy()
 
             for {
-                buf, err := in.get()
-                log.Warning(string(buf))
+                buf, err := in.Get()
                 if err != nil && err != io.EOF {
                     return err
                 }
@@ -200,6 +189,7 @@ func (m *Master) merge(jobName string, outFile string, nReduce int) error {
 	return nil
 }
 
+// random pick some sample
 func (m *Master) sample(jobName string, inFile string, num int) error {
     in, err := os.Open(m.rootDir + inFile)
     if err != nil {
@@ -236,11 +226,11 @@ func (m *Master) sample(jobName string, inFile string, num int) error {
     return nil
 }
 
+// schedule workers to do the tasks
 func (m *Master) schedule(jobName string, phase JobPhase, nTasks int, nOther int) error {
-	var wg sync.WaitGroup
-
     log.Infof("start phase %v", phase)
 
+	var wg sync.WaitGroup
 	wg.Add(nTasks)
 	for i := 0; i < nTasks; i++ {
 		go func(x int) {
@@ -274,11 +264,13 @@ func (m *Master) TeraHeader(num int, checksum int) string {
     return fmt.Sprintf("Tera %d %d", num, checksum)
 }
 
+// do the sort
 func (m *Master) TeraSort(in, out string) error {
     m.doJob("Terasort", in, out, TerasortMapTaskNum, TerasortReduceTaskNum)
     return nil
 }
 
+// generate input file, one string per line
 func (m *Master) TeraGen(filename string) error {
 	f, err := os.OpenFile(m.rootDir + filename, os.O_WRONLY | os.O_CREATE, FilePerm)
     if err != nil {
@@ -286,13 +278,31 @@ func (m *Master) TeraGen(filename string) error {
     }
     defer f.Close()
 
+    ans := make([]string, TeraGenNumber)
+
+    log.Info("start generating strings")
     str := make([]byte, StringLength)
 	for i := 0; i < TeraGenNumber; i++ {
         for j := 0; j < StringLength; j++ {
             str[j] = byte(rand.Int31() % 26 + 'a')
         }
 		f.WriteString(fmt.Sprintf("%v\n", string(str)))
+
+        ans[i] = string(str)
 	}
+    log.Info("sort answer")
+
+    sort.Strings(ans)
+
+    ansf, err := os.OpenFile(m.rootDir + "ans.txt", os.O_CREATE | os.O_WRONLY, FilePerm)
+    if err != nil {
+        return err
+    }
+    _, err = ansf.WriteString(strings.Join(ans, "\n") + "\n")
+    if err !=  nil {
+        return err
+    }
+    ansf.Close()
 
     return nil
 }

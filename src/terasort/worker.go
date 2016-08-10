@@ -26,8 +26,6 @@ type Worker struct {
 	dead     bool
 }
 
-
-
 func NewWorker(address, master string, rootDir string) *Worker {
 	wk := &Worker{
 		address:  address,
@@ -85,6 +83,7 @@ func (wk *Worker) Shutdown() {
 	}
 }
 
+// do map task or do reduce task
 func (wk *Worker) RPCDoTask(args DoTaskArg, reply *DoTaskReply) error {
 	var err error
 	if args.Phase == MapPhase {
@@ -122,7 +121,7 @@ func (wk *Worker) loadSample(jobName string) error {
     wk.sample = strings.Split(string(buf), "\n")
     wk.sample = wk.sample[:len(wk.sample) - 1]
 
-    log.Info(wk.sample)
+    //log.Info(wk.sample)
     return nil
 }
 
@@ -143,6 +142,7 @@ func lowerBound(sample []string, value string) int {
     return l
 }
 
+// map numbers to corresponding reduce task
 func (wk *Worker) doMap(jobName string, taskNo int, nOther int) error {
     log.Infof("wk %v do map %v", wk.address, taskNo)
 
@@ -157,18 +157,15 @@ func (wk *Worker) doMap(jobName string, taskNo int, nOther int) error {
         return fmt.Errorf("sample and reduce number don't match")
     }
 
-    // domap
-    in, err := os.Open(wk.rootDir + mapName(jobName, taskNo))
+    in, err := NewFileBuffer(wk.rootDir + mapName(jobName, taskNo), StringLength + 1, DefaultBufferSize)
     if err != nil {
         return err
     }
-    defer in.Close()
+    defer in.Destroy()
 
-    bufferSize := 100
-    buf := make([]byte, (StringLength + 1) * bufferSize)
-    pos := 0
+    // domap
     for {
-        n, err := in.ReadAt(buf, int64(pos))
+        buf, err := in.Get()
         if err != nil && err != io.EOF {
             return err
         }
@@ -193,10 +190,12 @@ func (wk *Worker) doMap(jobName string, taskNo int, nOther int) error {
                 if err != nil {
                     return err
                 }
-                //defer out.Close()
+                defer out.Close()
 
-                log.Info("write ", k, " ", strings.Join(v, "\n"))
-                _, err = out.WriteString(strings.Join(v, "\n") + "\n")
+                //log.Info("write ", k, " ", strings.Join(v, "\n"))
+                for i := range v {
+                    out.WriteString(v[i] + "\n")
+                }
                 if err != nil {
                     return err
                 }
@@ -206,7 +205,6 @@ func (wk *Worker) doMap(jobName string, taskNo int, nOther int) error {
             }
         }
 
-        pos += n
         if err == io.EOF {
             break
         }
@@ -220,16 +218,16 @@ func (wk *Worker) doReduce(jobName string, taskNo int, nOther int) error {
 
     var all []string
 
-    // read
+    // read from nMap files
     for i := 0; i < nOther; i++ {
-        in, err := newFileBuffer(wk.rootDir + reduceName(jobName, i, taskNo), StringLength + 1, DefaultBufferSize)
+        in, err := NewFileBuffer(wk.rootDir + reduceName(jobName, i, taskNo), StringLength + 1, DefaultBufferSize)
         if err != nil {
             return err
         }
-        defer in.destroy()
+        defer in.Destroy()
 
         for {
-            buf, err := in.get()
+            buf, err := in.Get()
             if err != nil && err != io.EOF {
                 return err
             }

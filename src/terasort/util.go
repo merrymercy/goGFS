@@ -18,7 +18,7 @@ func Call(srv, rpcname string, args, reply interface{}) error {
 }
 
 const (
-	DefaultBufferSize = 1 << 20
+	DefaultBufferSize = 16 << 20
 )
 
 // buffered IO
@@ -30,7 +30,7 @@ type FileBuffer struct {
 	pos   int
 }
 
-func newFileBuffer(filename string, align, size int) (*FileBuffer, error) {
+func NewFileBuffer(filename string, align, size int) (*FileBuffer, error) {
 	file, err := os.Open(filename)
 	if err != nil {
 		return nil, err
@@ -42,12 +42,12 @@ func newFileBuffer(filename string, align, size int) (*FileBuffer, error) {
 	return &FileBuffer{file, buf, align, size, 0}, nil
 }
 
-func (fb *FileBuffer) get() ([]byte, error) {
+func (fb *FileBuffer) Get() ([]byte, error) {
 	n, err := fb.file.ReadAt(fb.buf, int64(fb.pos))
 	fb.pos += n
 	return fb.buf[:n], err
 }
 
-func (fb *FileBuffer) destroy() {
+func (fb *FileBuffer) Destroy() {
 	fb.file.Close()
 }

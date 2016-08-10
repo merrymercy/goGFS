@@ -1,4 +1,5 @@
 .DS_Store
 *.swp
 src/github.com
+src/terasort/test
 gfs.pdf
