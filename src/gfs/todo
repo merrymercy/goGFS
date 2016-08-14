@@ -1,0 +1,34 @@
+# Todo
+re-replication 重定义接口
+latent : ck.abandoned is out of readlock
+
+# Must
+graybox shutdown in append EOF
+graybox shutdown in append lease slice
+
+# Experience
+return 锁问题
+chunkserver , master 互相死锁
+跨chunk的eof
+
+# Run command
+center:
+go run stress/stress_center.go -listen :6666
+
+master:
+go run stress/stress_node.go -center :6666 -eth lo -id master -role master -listen :7777
+
+server:
+go run stress/stress_node.go -center :6666 -eth lo -master :7777 -role chunkserver -listen :10003 -id cs3
+
+kill:
+pssh -h ~/server.txt -l gfs -t 3600 -A -i "pkill stress_node"
+
+rm dir:
+pssh -h ~/all.txt -l gfs -A -i rm -rf /home/gfs/zlm
+
+send src:
+pscp -r -h ~/all.txt -l gfs -A ppca-gfs/ /home/gfs/zlm
+
+run:
+pssh -h ~/server.txt -l gfs -A -i -t 3600 -o out/ -e err/ bash /home/gfs/run.sh /home/gfs/zlm
