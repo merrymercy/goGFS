@@ -76,25 +76,25 @@ var (
 // system config
 const (
 	// chunk
-	LeaseExpire        = 2 * time.Second //1 * time.Minute
+	LeaseExpire        = 3 * time.Second //1 * time.Minute
 	DefaultNumReplicas = 3
 	MinimumNumReplicas = 2
-	MaxChunkSize       = 512 << 10 // 512KB DEBUG ONLY 64 << 20
+	MaxChunkSize       = 32 << 20 // 512KB DEBUG ONLY 64 << 20
 	MaxAppendSize      = MaxChunkSize / 4
 	DeletedFilePrefix  = "__del__"
 
 	// master
 	ServerCheckInterval = 400 * time.Millisecond //
-	MasterStoreInterval = 30 * time.Second       // 30 * time.Minute
+	MasterStoreInterval = 30 * time.Hour         // 30 * time.Minute
 	ServerTimeout       = 1 * time.Second
 
 	// chunk server
 	HeartbeatInterval    = 200 * time.Millisecond
 	MutationWaitTimeout  = 4 * time.Second
-	ServerStoreInterval  = 30 * time.Second // 30 * time.Minute
-	GarbageCollectionInt = 30 * time.Minute // 1 * time.Day
+	ServerStoreInterval  = 40 * time.Hour // 30 * time.Minute
+	GarbageCollectionInt = 30 * time.Hour // 1 * time.Day
 	DownloadBufferExpire = 2 * time.Minute
-	DownloadBufferTick   = 10 * time.Second
+	DownloadBufferTick   = 30 * time.Second
 
 	// client
 	ClientTryTimeout = 2*LeaseExpire + 3*ServerTimeout

@@ -491,7 +491,7 @@ func TestComprehensiveOperation(t *testing.T) {
 
 	// wait to test race contition
 	fmt.Println("###### Continue life for the elder to pass a long time test...")
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 10; i++ {
 		fmt.Print(" +1s ")
 		time.Sleep(time.Second)
 	}

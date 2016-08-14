@@ -122,7 +122,7 @@ func (c *Client) Read(path gfs.Path, offset gfs.Offset, data []byte) (n int, err
 			if err == nil || err.(gfs.Error).Code == gfs.ReadEOF {
 				break
 			}
-			//log.Warning("Read connection error, try again: ", err)
+			log.Warning("Read ", handle, " connection error, try again: ", err)
 		}
 
 		offset += gfs.Offset(n)
@@ -141,8 +141,6 @@ func (c *Client) Read(path gfs.Path, offset gfs.Offset, data []byte) (n int, err
 
 // Write is a client API. write data to file at specific offset
 func (c *Client) Write(path gfs.Path, offset gfs.Offset, data []byte) error {
-	begin := 0
-
 	var f gfs.GetFileInfoReply
 	err := util.Call(c.master, "Master.RPCGetFileInfo", gfs.GetFileInfoArg{path}, &f)
 	if err != nil {
@@ -153,6 +151,7 @@ func (c *Client) Write(path gfs.Path, offset gfs.Offset, data []byte) error {
 		return fmt.Errorf("write offset exceeds file size")
 	}
 
+	begin := 0
 	for {
 		index := gfs.ChunkIndex(offset / gfs.MaxChunkSize)
 		chunkOffset := offset % gfs.MaxChunkSize
@@ -183,7 +182,7 @@ func (c *Client) Write(path gfs.Path, offset gfs.Offset, data []byte) error {
 			if err == nil {
 				break
 			}
-			//log.Warning("Write : connection error, try again ", err)
+			log.Warning("Write ", handle, "  connection error, try again ", err)
 		}
 		if err != nil {
 			return err
@@ -238,8 +237,8 @@ func (c *Client) Append(path gfs.Path, data []byte) (offset gfs.Offset, err erro
 			if err == nil || err.(gfs.Error).Code == gfs.AppendExceedChunkSize {
 				break
 			}
-			time.Sleep(500 * time.Millisecond)
-			//log.Warning("Append connection error, try again ", err)
+			log.Warning("Append ", handle, " connection error, try again ", err)
+			time.Sleep(50 * time.Millisecond)
 		}
 		if err == nil || err.(gfs.Error).Code != gfs.AppendExceedChunkSize {
 			break
@@ -286,10 +285,12 @@ func (c *Client) ReadChunk(handle gfs.ChunkHandle, offset gfs.Offset, data []byt
 		return 0, gfs.Error{gfs.UnknownError, err.Error()}
 	}
 	loc := l.Locations[rand.Intn(len(l.Locations))]
+	if len(l.Locations) == 0 {
+		return 0, gfs.Error{gfs.UnknownError, "no replica"}
+	}
 
 	var r gfs.ReadChunkReply
 	r.Data = data
-
 	err = util.Call(loc, "ChunkServer.RPCReadChunk", gfs.ReadChunkArg{handle, offset, readLen}, &r)
 	if err != nil {
 		return 0, gfs.Error{gfs.UnknownError, err.Error()}

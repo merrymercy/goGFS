@@ -254,7 +254,11 @@ func (m *Master) RPCHeartbeat(args gfs.HeartbeatArg, reply *gfs.HeartbeatReply) 
 
 		for _, v := range r.Chunks {
 			m.cm.RLock()
-			version := m.cm.chunk[v.Handle].version
+			ck, ok := m.cm.chunk[v.Handle]
+			if !ok {
+				continue
+			}
+			version := ck.version
 			m.cm.RUnlock()
 
 			if v.Version == version {

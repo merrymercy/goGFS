@@ -55,7 +55,13 @@ func (csm *chunkServerManager) AddChunk(addrs []gfs.ServerAddress, handle gfs.Ch
 	defer csm.Unlock()
 
 	for _, v := range addrs {
-		csm.servers[v].chunks[handle] = true
+		//csm.servers[v].chunks[handle] = true
+		sv, ok := csm.servers[v]
+		if ok {
+			sv.chunks[handle] = true
+		} else {
+			log.Warning("add chunk in removed server ", sv)
+		}
 	}
 }
 

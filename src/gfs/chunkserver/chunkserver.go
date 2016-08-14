@@ -119,21 +119,26 @@ func NewAndServe(addr, masterAddr gfs.ServerAddress, rootDir string) *ChunkServe
 		quickStart <- true
 		for {
 			var err error
+			var branch string
 			select {
 			case <-cs.shutdown:
 				return
 			case <-quickStart:
+				branch = "heartbeat"
 				err = cs.heartbeat()
 			case <-heartbeatTicker:
+				branch = "heartbeat"
 				err = cs.heartbeat()
 			case <-storeTicker:
+				branch = "storemeta"
 				err = cs.storeMeta()
 			case <-garbageTicker:
+				branch = "garbagecollecton"
 				err = cs.garbageCollection()
 			}
 
 			if err != nil {
-				log.Error("%v background error %v", cs.address, err)
+				log.Errorf("%v background(%v) error %v", cs.address, branch, err)
 			}
 		}
 	}()
@@ -295,12 +300,15 @@ func (cs *ChunkServer) RPCCheckVersion(args gfs.CheckVersionArg, reply *gfs.Chec
 
 // RPCForwardData is called by client or another replica who sends data to the current memory buffer.
 func (cs *ChunkServer) RPCForwardData(args gfs.ForwardDataArg, reply *gfs.ForwardDataReply) error {
+	//log.Warning(cs.address, " data 1 ", args.DataID)
 	if _, ok := cs.dl.Get(args.DataID); ok {
 		return fmt.Errorf("Data %v already exists", args.DataID)
 	}
 
 	//log.Infof("Server %v : get data %v", cs.address, args.DataID)
+	//log.Warning(cs.address, "data 2 ", args.DataID)
 	cs.dl.Set(args.DataID, args.Data)
+	//log.Warning(cs.address, "data 3 ", args.DataID)
 
 	if len(args.ChainOrder) > 0 {
 		next := args.ChainOrder[0]
@@ -308,6 +316,7 @@ func (cs *ChunkServer) RPCForwardData(args gfs.ForwardDataArg, reply *gfs.Forwar
 		err := util.Call(next, "ChunkServer.RPCForwardData", args, reply)
 		return err
 	}
+	//log.Warning(cs.address, "data 4 ", args.DataID)
 
 	return nil
 }
@@ -386,17 +395,22 @@ func (cs *ChunkServer) RPCWriteChunk(args gfs.WriteChunkArg, reply *gfs.WriteChu
 	if err = func() error {
 		ck.Lock()
 		defer ck.Unlock()
-		mutations := &Mutation{gfs.MutationWrite, data, args.Offset}
+		mutation := &Mutation{gfs.MutationWrite, data, args.Offset}
 
 		// apply to local
-		err = cs.doMutation(handle, mutations)
-		if err != nil {
-			return err
-		}
+		wait := make(chan error, 1)
+		go func() {
+			wait <- cs.doMutation(handle, mutation)
+		}()
 
 		// call secondaries
 		callArgs := gfs.ApplyMutationArg{gfs.MutationWrite, args.DataID, args.Offset}
 		err = util.CallAll(args.Secondaries, "ChunkServer.RPCApplyMutation", callArgs)
+		if err != nil {
+			return err
+		}
+
+		err = <-wait
 		if err != nil {
 			return err
 		}
@@ -471,7 +485,6 @@ func (cs *ChunkServer) RPCAppendChunk(args gfs.AppendChunkArg, reply *gfs.Append
 		if err != nil {
 			return err
 		}
-
 		return nil
 	}(); err != nil {
 		return err
@@ -577,7 +590,11 @@ func (cs *ChunkServer) writeChunk(handle gfs.ChunkHandle, data []byte, offset gf
 		ck.length = newLen
 	}
 
-	//log.Infof("Server %v : write to chunk %v data %q", cs.address, handle, data)
+	if newLen > gfs.MaxChunkSize {
+		log.Fatal("new length > gfs.MaxChunkSize")
+	}
+
+	log.Infof("Server %v : write to chunk %v at %v len %v", cs.address, handle, offset, len(data))
 	filename := path.Join(cs.rootDir, fmt.Sprintf("chunk%v.chk", handle))
 	file, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE, FilePerm)
 	if err != nil {
@@ -603,6 +620,7 @@ func (cs *ChunkServer) readChunk(handle gfs.ChunkHandle, offset gfs.Offset, data
 	}
 	defer f.Close()
 
+	log.Infof("Server %v : read chunk %v at %v len %v", cs.address, handle, offset, len(data))
 	return f.ReadAt(data, int64(offset))
 }
 
