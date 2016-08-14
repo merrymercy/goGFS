@@ -25,6 +25,7 @@ type chunkManager struct {
 
 type chunkInfo struct {
 	sync.RWMutex
+	origin   []gfs.ServerAddress
 	location []gfs.ServerAddress // set of replica locations
 	primary  gfs.ServerAddress   // primary chunkserver
 	expire   time.Time           // lease expire time
@@ -178,32 +179,34 @@ func (cm *chunkManager) GetLeaseHolder(handle gfs.ChunkHandle) (*gfs.Lease, []gf
 		var lock sync.Mutex // lock for newlist
 
 		var wg sync.WaitGroup
-		wg.Add(len(ck.location))
-		for _, v := range ck.location {
+		wg.Add(len(ck.origin))
+		for _, v := range ck.origin {
 			go func(addr gfs.ServerAddress) {
 				var r gfs.CheckVersionReply
 
-				// TODO distinguish call error and r.Stale
 				err := util.Call(addr, "ChunkServer.RPCCheckVersion", arg, &r)
-				if err == nil && r.Stale == false {
-					lock.Lock()
-					newlist = append(newlist, string(addr))
-					lock.Unlock()
-				} else { // add to garbage collection
-					log.Warningf("detect stale chunk %v in %v (err: %v)", handle, addr, err)
-					staleServers = append(staleServers, addr)
+				if err != nil { // ignore
+					log.Warningf("CheckVersion connection error chunk %v in %v (err: %v)", handle, addr, err)
+				} else {
+					if r.Stale == false {
+						lock.Lock()
+						newlist = append(newlist, string(addr))
+						lock.Unlock()
+					} else { // add to garbage collection, never use it again
+						log.Warningf("detect stale chunk %v in %v (err: %v)", handle, addr, err)
+						staleServers = append(staleServers, addr)
+					}
 				}
 				wg.Done()
 			}(v)
 		}
 		wg.Wait()
 
-		//sort.Strings(newlist)
+		sort.Strings(newlist)
 		ck.location = make([]gfs.ServerAddress, len(newlist))
 		for i := range newlist {
 			ck.location[i] = gfs.ServerAddress(newlist[i])
 		}
-		log.Warning(handle, " lease location ", ck.location)
 
 		if len(ck.location) < gfs.MinimumNumReplicas {
 			cm.Lock()
@@ -216,6 +219,8 @@ func (cm *chunkManager) GetLeaseHolder(handle gfs.ChunkHandle) (*gfs.Lease, []gf
 				return nil, nil, fmt.Errorf("no replica of %v", handle)
 			}
 		}
+
+		log.Warning(handle, " lease location ", ck.location)
 
 		// TODO choose primary, !!error handle no replicas!!
 		ck.primary = ck.location[0]
@@ -290,6 +295,9 @@ func (cm *chunkManager) CreateChunk(path gfs.Path, addrs []gfs.ServerAddress) (g
 			errList += err.Error() + ";"
 		}
 	}
+	ck.origin = make([]gfs.ServerAddress, len(ck.location))
+	copy(ck.origin, ck.location)
+	//log.Warning("origin ", ck.origin, "  location", ck.location)
 
 	if errList == "" {
 		return handle, success, nil
@@ -329,7 +337,7 @@ func (cm *chunkManager) RemoveChunks(handles []gfs.ChunkHandle, server gfs.Serve
 		if num < gfs.MinimumNumReplicas {
 			cm.replicasNeedList = append(cm.replicasNeedList, v)
 			if num == 0 {
-				log.Error("lose all replica of %v", v)
+				log.Error("lose all replicas of ", v)
 				errList += fmt.Sprintf("Lose all replicas of chunk %v;", v)
 			}
 		}

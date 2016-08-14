@@ -192,6 +192,7 @@ func (m *Master) serverCheck() error {
 	handles := m.cm.GetNeedlist()
 	if handles != nil {
 		log.Info("Master Need ", handles)
+		return nil
 		m.cm.RLock()
 		for i := 0; i < len(handles); i++ {
 			ck := m.cm.chunk[handles[i]]
@@ -282,9 +283,10 @@ func (m *Master) RPCGetPrimaryAndSecondaries(args gfs.GetPrimaryAndSecondariesAr
 		return err
 	}
 
-	for _, v := range staleServers {
-		m.csm.AddGarbage(v, args.Handle)
-	}
+	_ = staleServers
+	//for _, v := range staleServers {
+	//	m.csm.AddGarbage(v, args.Handle)
+	//}
 
 	reply.Primary = lease.Primary
 	reply.Expire = lease.Expire
@@ -303,6 +305,7 @@ func (m *Master) RPCExtendLease(args gfs.ExtendLeaseArg, reply *gfs.ExtendLeaseR
 // RPCGetReplicas is called by client to find all chunkserver that holds the chunk.
 func (m *Master) RPCGetReplicas(args gfs.GetReplicasArg, reply *gfs.GetReplicasReply) error {
 	servers, err := m.cm.GetReplicas(args.Handle)
+	log.Info(args.Handle, " replicas ", servers)
 	if err != nil {
 		return err
 	}

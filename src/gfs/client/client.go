@@ -122,7 +122,7 @@ func (c *Client) Read(path gfs.Path, offset gfs.Offset, data []byte) (n int, err
 			if err == nil || err.(gfs.Error).Code == gfs.ReadEOF {
 				break
 			}
-			log.Warning("Read ", handle, " connection error, try again: ", err)
+			log.Warning("Read connection error, try again: ", err)
 		}
 
 		offset += gfs.Offset(n)
@@ -182,7 +182,7 @@ func (c *Client) Write(path gfs.Path, offset gfs.Offset, data []byte) error {
 			if err == nil {
 				break
 			}
-			log.Warning("Write ", handle, "  connection error, try again ", err)
+			log.Warning("Write connection error, try again ", err)
 		}
 		if err != nil {
 			return err
@@ -284,17 +284,21 @@ func (c *Client) ReadChunk(handle gfs.ChunkHandle, offset gfs.Offset, data []byt
 	if err != nil {
 		return 0, gfs.Error{gfs.UnknownError, err.Error()}
 	}
-	loc := l.Locations[rand.Intn(len(l.Locations))]
 	if len(l.Locations) == 0 {
 		return 0, gfs.Error{gfs.UnknownError, "no replica"}
 	}
+	loc := l.Locations[rand.Intn(len(l.Locations))]
 
 	var r gfs.ReadChunkReply
+
+	log.Info("Client : call ", loc, " read ", handle, " at ", offset, " len: ", readLen)
 	r.Data = data
 	err = util.Call(loc, "ChunkServer.RPCReadChunk", gfs.ReadChunkArg{handle, offset, readLen}, &r)
+	//log.Info("call ", loc, " read end ", handle, " ", offset)
 	if err != nil {
 		return 0, gfs.Error{gfs.UnknownError, err.Error()}
 	}
+	//copy(data, r.Data)
 	if r.ErrorCode == gfs.ReadEOF {
 		return r.Length, gfs.Error{gfs.ReadEOF, "read EOF"}
 	}
@@ -356,6 +360,7 @@ func (c *Client) AppendChunk(handle gfs.ChunkHandle, data []byte) (offset gfs.Of
 
 	var a gfs.AppendChunkReply
 	acargs := gfs.AppendChunkArg{dataID, l.Secondaries}
+	log.Info("Client : call ", l.Primary, l.Secondaries, " append ", handle, " at ", offset, " len: ", len(data))
 	err = util.Call(l.Primary, "ChunkServer.RPCAppendChunk", acargs, &a)
 	if err != nil {
 		return -1, gfs.Error{gfs.UnknownError, err.Error()}

@@ -60,7 +60,7 @@ func (csm *chunkServerManager) AddChunk(addrs []gfs.ServerAddress, handle gfs.Ch
 		if ok {
 			sv.chunks[handle] = true
 		} else {
-			log.Warning("add chunk in removed server ", sv)
+			log.Warning("add chunk in removed server addrs", sv)
 		}
 	}
 }

@@ -125,10 +125,10 @@ func NewAndServe(addr, masterAddr gfs.ServerAddress, rootDir string) *ChunkServe
 				return
 			case <-quickStart:
 				branch = "heartbeat"
-				err = cs.heartbeat()
+				cs.heartbeat()
 			case <-heartbeatTicker:
 				branch = "heartbeat"
-				err = cs.heartbeat()
+				cs.heartbeat()
 			case <-storeTicker:
 				branch = "storemeta"
 				err = cs.storeMeta()
@@ -414,6 +414,7 @@ func (cs *ChunkServer) RPCWriteChunk(args gfs.WriteChunkArg, reply *gfs.WriteChu
 		if err != nil {
 			return err
 		}
+
 		return nil
 	}(); err != nil {
 		return err
@@ -469,11 +470,12 @@ func (cs *ChunkServer) RPCAppendChunk(args gfs.AppendChunkArg, reply *gfs.Append
 		//log.Infof("Primary %v : append chunk %v version %v", cs.address, args.DataID.Handle, version)
 
 		// apply to local
-		wait := make(chan error, 1)
-		go func() {
-			wait <- cs.doMutation(handle, mutation)
-		}()
+		//wait := make(chan error, 1)
+		//go func() {
+		//	wait <- cs.doMutation(handle, mutation)
+		//}()
 
+		err = cs.doMutation(handle, mutation)
 		// call secondaries
 		callArgs := gfs.ApplyMutationArg{mtype, args.DataID, offset}
 		err = util.CallAll(args.Secondaries, "ChunkServer.RPCApplyMutation", callArgs)
@@ -481,10 +483,11 @@ func (cs *ChunkServer) RPCAppendChunk(args gfs.AppendChunkArg, reply *gfs.Append
 			return err
 		}
 
-		err = <-wait
+		//err = <-wait
 		if err != nil {
 			return err
 		}
+
 		return nil
 	}(); err != nil {
 		return err
@@ -621,7 +624,11 @@ func (cs *ChunkServer) readChunk(handle gfs.ChunkHandle, offset gfs.Offset, data
 	defer f.Close()
 
 	log.Infof("Server %v : read chunk %v at %v len %v", cs.address, handle, offset, len(data))
-	return f.ReadAt(data, int64(offset))
+	var n int
+	n, err = f.ReadAt(data, int64(offset))
+	//log.Debug("Server %v : read chunk %v at %v len %v ret(%v,%v)", cs.address, handle, offset, len(data), n, err)
+
+	return n, err
 }
 
 // deleteChunk deletes a chunk during garbage collection
