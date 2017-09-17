@@ -1,5 +1,5 @@
 # goGFS
-A simple implementation of the Google File System (GFS).  
+goGFS is a simple implementation of the Google File System (GFS) in golang.
 It is tested with a small cluster of inexpensive machines (1 master, 12 chunkservers and 12 clients).  
 Fault tolerance is provided.
 
