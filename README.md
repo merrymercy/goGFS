@@ -1,6 +1,6 @@
-# llgfs
-A simple implementation of Google File System (GFS).  
-The correctness is tested with a small cluster of inexpensive machines (1 master, 12 chunkservers and 12 clients).  
+# goGFS
+A simple implementation of the Google File System (GFS).  
+It is tested with a small cluster of inexpensive machines (1 master, 12 chunkservers and 12 clients).  
 Fault tolerance is provided.
 
 # Feature
