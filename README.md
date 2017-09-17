@@ -1,5 +1,5 @@
 # llgfs
-A clean implementation of the Google File System.  
+A simple implementation of the Google File System.  
 The correctness is tested with a small cluster of inexpensive machines (1 master, 12 chunkservers and 12 clients).  
 Fault tolerance is provided.
 
